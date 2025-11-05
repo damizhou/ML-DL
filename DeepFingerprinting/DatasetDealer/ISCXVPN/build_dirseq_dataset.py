@@ -92,25 +92,51 @@ def iter_packets(path: str):
         f.close()
 
 def parse_ip_l4(pkt: bytes):
+    # 尝试 Ethernet
+    ip = None
     try:
-        eth = dpkt.ethernet.Ethernet(pkt); ip = eth.data
+        eth = dpkt.ethernet.Ethernet(pkt)
+        ip = eth.data
     except Exception:
         ip = None
+
+    # 回退 Linux SLL
     if not isinstance(ip, (dpkt.ip.IP, dpkt.ip6.IP6)):
         try:
-            sll = dpkt.sll.SLL(pkt); ip = sll.data
+            sll = dpkt.sll.SLL(pkt)
+            ip = sll.data
         except Exception:
-            return None
+            ip = None
+
+    # 回退 Loopback (DLT_NULL)
+    if not isinstance(ip, (dpkt.ip.IP, dpkt.ip6.IP6)):
+        try:
+            lo = dpkt.loopback.Loopback(pkt)
+            ip = lo.data
+        except Exception:
+            ip = None
+
+    # RAW IPv4/IPv6 兜底
+    if not isinstance(ip, (dpkt.ip.IP, dpkt.ip6.IP6)):
+        try:
+            ip = dpkt.ip.IP(pkt)
+        except Exception:
+            try:
+                ip = dpkt.ip6.IP6(pkt)
+            except Exception:
+                return None  # 仍然解不出来，放弃
+
+    # 走到这里一定是 IPv4/IPv6
     if isinstance(ip, dpkt.ip.IP):
         af = socket.AF_INET; proto = ip.p; l4 = ip.data
         src = socket.inet_ntop(af, ip.src); dst = socket.inet_ntop(af, ip.dst)
-    elif isinstance(ip, dpkt.ip6.IP6):
+    else:
         af = socket.AF_INET6; proto = ip.nxt; l4 = ip.data
         src = socket.inet_ntop(af, ip.src); dst = socket.inet_ntop(af, ip.dst)
-    else:
-        return None
+
     if isinstance(l4, (dpkt.tcp.TCP, dpkt.udp.UDP)):
-        if l4.sport is None or l4.dport is None: return None
+        if l4.sport is None or l4.dport is None:
+            return None
         payload_len = len(l4.data or b"")
         return src, int(l4.sport), dst, int(l4.dport), int(proto), int(payload_len)
     return None

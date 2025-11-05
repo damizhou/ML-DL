@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-deal_iscxvpn_labels.py
-输入: ISCX-VPN-NonVPN-2016 的根目录（默认已写在代码里，也可命令行覆盖）
-功能: 递归扫描根目录下的 novpn/vpn 子树，按文件名规则自动生成 (path,label) 映射表
-输出: artifacts/<DATASET_KEY>/label_map.csv
+deal_iscxvpn_labels1.py
+
+- 递归扫描 DATASET_ROOT 下的 *.pcap / *.pcapng
+- 直接输出 12 类最终标签（0..11），不生成细粒度中间态：
+    0 chat, 1 email, 2 ft, 3 p2p, 4 stream, 5 voip,
+    6 vpn-chat, 7 vpn-email, 8 vpn-ft, 9 vpn-p2p, 10 vpn-stream, 11 vpn-voip
+- 针对你贴出的 140 个文件名做了归一化与正则匹配的补强：
+  * 剥去末尾数字/字母后缀：1、2、1a、2b、A、B 等
+  * 剥去末尾方向后缀：_up / _down（大小写）
+  * VPN 判定优先使用父目录末尾标记：*_vpn / *_novpn
+  * 兼容无下划线写法：facebookchat、gmailchat、icqchat、skypechat 等
+  * 兼容 youtubeHTML5_1 → 归为 stream
 """
 
 from __future__ import annotations
@@ -12,161 +20,196 @@ import os, re, csv, sys
 from typing import List, Tuple, Optional, Dict
 from collections import Counter
 
-# ========= 参数（默认可直接运行） =========
-DATASET_KEY   = "iscx"  # 产物目录名: artifacts/iscx/
-DATASET_ROOT  = "/netdisk/dataset/public_dataset/ISCX-VPN-NonVPN-2016"  # 根目录
-PCAP_EXTS     = (".pcap", ".pcapng", ".pcap.gz", ".pcapng.gz")
+# ===== 固定数据集根目录 =====
+DATASET_ROOT = "/netdisk/dataset/public_dataset/ISCX-VPN-NonVPN-2016"
 
+# ===== 产物与扫描参数 =====
+DATASET_KEY = "iscx"
+VALID_SUFFIXES = (".pcap", ".pcapng")
+IGNORE_HIDDEN = True
 
-# 文件名 -> 标签（{prefix} 会替换为 vpn/novpn）
-AUTO_LABEL_RULES: List[Tuple[str, str]] = [
-    (r"(?:^|_)aim[_-]?chat",                  "{prefix}_aim_chat"),
-    (r"(?:^|_)email",                         "{prefix}_email"),
-    (r"(?:^|_)facebook[_-]?audio",            "{prefix}_facebook_audio"),
-    (r"(?:^|_)facebook[_-]?chat|facebookchat","{prefix}_facebook_chat"),
-    (r"(?:^|_)facebook[_-]?video",            "{prefix}_facebook_video"),
-    (r"(?:^|_)ftps[_-]?down",                 "{prefix}_ftps_down"),
-    (r"(?:^|_)ftps[_-]?up",                   "{prefix}_ftps_up"),
-    (r"(?:^|_)gmail[_-]?chat",                "{prefix}_gmailchat"),
-    (r"(?:^|_)hangouts?[_-]?audio",           "{prefix}_hangouts_audio"),
-    (r"(?:^|_)hangouts?[_-]?chat|hangout[_-]?chat", "{prefix}_hangouts_chat"),
-    (r"(?:^|_)hangouts?[_-]?video",           "{prefix}_hangouts_video"),
-    (r"(?:^|_)icq[_-]?chat|icqchat",          "{prefix}_icq_chat"),
-    (r"(?:^|_)netflix",                       "{prefix}_netflix"),
-    (r"(?:^|_)scp[_-]?down|scpDown",          "{prefix}_scp_down"),
-    (r"(?:^|_)scp[_-]?up|scpUp",              "{prefix}_scp_up"),
-    (r"(?:^|_)sftp[_-]?down",                 "{prefix}_sftp_down"),
-    (r"(?:^|_)sftp[_-]?up",                   "{prefix}_sftp_up"),
-    (r"(?:^|_)sftp(\d|$)",                    "{prefix}_sftp"),
-    (r"(?:^|_)skype[_-]?audio",               "{prefix}_skype_audio"),
-    (r"(?:^|_)skype[_-]?chat",                "{prefix}_skype_chat"),
-    (r"(?:^|_)skype[_-]?file",                "{prefix}_skype_file"),
-    (r"(?:^|_)skype[_-]?video",               "{prefix}_skype_video"),
-    (r"(?:^|_)spotify",                       "{prefix}_spotify"),
-    (r"(?:^|_)vimeo",                         "{prefix}_vimeo"),
-    (r"(?:^|_)voipbuster",                    "{prefix}_voipbuster"),
-    (r"(?:^|_)youtube",                       "{prefix}_youtube"),
-    # VPN 特例归一（如 vpn_ftps_A/B → vpn_ftps）
-    (r"^vpn[_-]?ftps[_-]?[ab]\b",             "vpn_ftps"),
-    (r"^vpn[_-]?sftp[_-]?[ab]\b",             "vpn_sftp"),
-    (r"^vpn[_-]?vimeo[_-]?[ab]\b",            "vpn_vimeo"),
-    (r"^vpn[_-]?skype[_-]?files",             "vpn_skype_file"),
-    (r"^vpn[_-]?bittorrent",                  "vpn_bittorrent"),
+# ===== 12 类定义 =====
+SERVICE_NAMES: List[str] = [
+    "chat", "email", "ft", "p2p", "stream", "voip",
+    "vpn-chat", "vpn-email", "vpn-ft", "vpn-p2p", "vpn-stream", "vpn-voip",
 ]
-# =====================================
+_BASE_ID: Dict[str, int] = {"chat": 0, "email": 1, "ft": 2, "p2p": 3, "stream": 4, "voip": 5}
 
-def ensure_dir(p: str) -> str:
-    os.makedirs(p, exist_ok=True); return p
+# ===== 基础六类直接匹配（无需细粒度中间态）=====
+PATTERNS: List[Tuple[re.Pattern, str]] = [
+    # P2P
+    (re.compile(r"(?:^|[_-])bittorrent(?:$|[_-])", re.I), "p2p"),
+    (re.compile(r"(?:^|[_-])torrent(?:$|[_-])",    re.I), "p2p"),
 
-def infer_prefix(path: str) -> str:
+    # Email
+    (re.compile(r"(?:^|[_-])email(?:$|[_-])",           re.I), "email"),
+    (re.compile(r"(?:^|[_-])email[_-]?client(?:$|[_-])",re.I), "email"),
+    (re.compile(r"(?:^|[_-])gmail(?:$|[_-])",           re.I), "email"),
+
+    # Chat（含无下划线写法）
+    (re.compile(r"(?:^|[_-])aim[_-]?chat(?:$|[_-])|(?:^|[_-])aimchat(?:$|[_-])", re.I), "chat"),
+    (re.compile(r"(?:^|[_-])facebook[_-]?chat(?:$|[_-])|(?:^|[_-])facebookchat(?:$|[_-])", re.I), "chat"),
+    (re.compile(r"(?:^|[_-])gmail[_-]?chat(?:$|[_-])|(?:^|[_-])gmailchat(?:$|[_-])", re.I), "chat"),
+    (re.compile(r"(?:^|[_-])hangouts?[_-]?chat(?:$|[_-])|(?:^|[_-])hangout[_-]?chat(?:$|[_-])", re.I), "chat"),
+    (re.compile(r"(?:^|[_-])icq[_-]?chat(?:$|[_-])|(?:^|[_-])icqchat(?:$|[_-])", re.I), "chat"),
+    (re.compile(r"(?:^|[_-])skype[_-]?chat(?:$|[_-])|(?:^|[_-])skypechat(?:$|[_-])", re.I), "chat"),
+
+    # File Transfer（兼容 up/down 以及 skype_file/files）
+    (re.compile(r"(?:^|[_-])sftp(?:[_-]?(?:up|down))?(?:$|[_-])", re.I), "ft"),
+    (re.compile(r"(?:^|[_-])scp(?:[_-]?(?:up|down))?(?:$|[_-])",  re.I), "ft"),
+    (re.compile(r"(?:^|[_-])ftps(?:[_-]?(?:up|down))?(?:$|[_-])", re.I), "ft"),
+    (re.compile(r"(?:^|[_-])skype[_-]?files?(?:$|[_-])",          re.I), "ft"),
+
+    # VoIP（实时通话）
+    (re.compile(r"(?:^|[_-])skype[_-]?audio(?:$|[_-])",   re.I), "voip"),
+    (re.compile(r"(?:^|[_-])skype[_-]?video(?:$|[_-])",   re.I), "voip"),
+    (re.compile(r"(?:^|[_-])hangouts?[_-]?audio(?:$|[_-])", re.I), "voip"),
+    (re.compile(r"(?:^|[_-])hangouts?[_-]?video(?:$|[_-])", re.I), "voip"),
+    (re.compile(r"(?:^|[_-])voipbuster(?:$|[_-])",        re.I), "voip"),
+
+    # Streaming（播放）
+    (re.compile(r"(?:^|[_-])facebook[_-]?audio(?:$|[_-])", re.I), "stream"),
+    (re.compile(r"(?:^|[_-])facebook[_-]?video(?:$|[_-])", re.I), "stream"),
+    (re.compile(r"(?:^|[_-])netflix(?:$|[_-])",            re.I), "stream"),
+    (re.compile(r"(?:^|[_-])vimeo(?:$|[_-])",              re.I), "stream"),
+    (re.compile(r"(?:^|[_-])spotify(?:$|[_-])",            re.I), "stream"),
+    # 兼容 youtubeHTML5_* 以及普通 youtube*
+    (re.compile(r"(?:^|[_-])youtube(?:html5)?(?:$|[_-])",  re.I), "stream"),
+]
+
+# ===== 小工具 =====
+def _is_hidden(name: str) -> bool:
+    return name.startswith(".")
+
+def _split_path_lower(path: str) -> List[str]:
+    comps: List[str] = []
+    while True:
+        path, tail = os.path.split(path)
+        if tail:
+            comps.append(tail.lower())
+        else:
+            if path:
+                comps.append(path.lower())
+            break
+        if not path:
+            break
+    comps.reverse()
+    return comps
+
+def _strip_tail_tokens(s: str) -> str:
     """
-    仅按目录组件/文件名词级匹配来判断 vpn / novpn：
-    - 优先匹配 novpn，其次匹配 vpn
-    - 只看词边界（_ - . /），避免 NonVPN / _novpn 这种误命中
+    归一化文件名（不含扩展名）：
+      1) 小写
+      2) 去掉末尾方向后缀：_up/_down（大小写）
+      3) 去掉末尾数字 + 可选 a/b（大小写）
+      4) 去掉末尾的 _a/_b（大小写），用于 vpn_*_A / vpn_*_B
     """
-    p = os.path.normpath(path).lower()
-    parts = p.split(os.sep)
+    s = s.lower()
+    s = re.sub(r"(?:[_-](?:up|down))$", "", s, flags=re.I)
+    s = re.sub(r"\d+[ab]?$", "", s, flags=re.I)
+    s = re.sub(r"[_-][ab]$", "", s, flags=re.I)
+    return s
 
-    # 只检查末端的几级（父目录/文件名），越近越可信
-    candidates = []
-    if len(parts) >= 3:
-        candidates.extend(parts[-3:])
-    else:
-        candidates.extend(parts)
+def infer_vpn_flag(path: str) -> bool:
+    """
+    True -> vpn, False -> novpn
+    判定优先级：
+      1) 父目录名末尾 *_vpn / *_novpn（最强）
+      2) 文件名以 vpn_ / vpn- 起始
+      3) 目录组件中独立出现 vpn / nonvpn（避免 nonvpn 抢占）
+    """
+    parent = os.path.basename(os.path.dirname(path)).lower()
+    if re.search(r"(?:^|[_-])vpn$", parent):
+        return True
+    if re.search(r"(?:^|[_-])novpn$", parent) or re.search(r"(?:^|[^a-z])nonvpn([^a-z]|$)", parent):
+        return False
 
-    # 文件名去扩展名后也加入一次
-    base = os.path.basename(p)
-    stem = os.path.splitext(base)[0]
-    candidates.append(stem)
+    stem = os.path.splitext(os.path.basename(path))[0].lower()
+    if stem.startswith(("vpn_", "vpn-")):
+        return True
 
-    # 先找 novpn，再找 vpn（词级匹配）
-    novpn_pat = re.compile(r'(^|[._-])novpn($|[._-])')
-    vpn_pat   = re.compile(r'(^|[._-])vpn($|[._-])')
+    for c in _split_path_lower(path):
+        if re.fullmatch(r"vpn", c):
+            return True
+        if re.fullmatch(r"novpn|nonvpn", c):
+            return False
+    return False  # 默认非 VPN
 
-    for comp in candidates:
-        if novpn_pat.search(comp):
-            return "novpn"
-    for comp in candidates:
-        if vpn_pat.search(comp):
-            return "vpn"
-
-    # 回退：文件名明确以 vpn_ 开头
-    if stem.startswith("vpn_"):
-        return "vpn"
-
-    # 再回退默认 novpn
-    return "novpn"
-
-def infer_label(path: str) -> Optional[str]:
-    base = os.path.basename(path)
-    stem = os.path.splitext(base)[0]
-    s = stem.lower()
-    pref = infer_prefix(path)
-    for pat, tmpl in AUTO_LABEL_RULES:
-        if re.search(pat, s, re.IGNORECASE):
-            return tmpl.format(prefix=pref)
-    # 回退：若文件名以 vpn_ 开头，去掉常见后缀 a/b/1a/1b 直接用
-    if s.startswith("vpn_"):
-        for cut in ("_1a","_1b","_2a","_2b","_a","_b"):
-            if s.endswith(cut):
-                s = s[: -len(cut)]
-                break
-        return s
-    # 其余无法识别的返回 None（跳过）
+def detect_base_service(stem: str) -> Optional[str]:
+    """
+    直接基于“文件名（不含扩展名）”判断基础六类：chat/email/ft/p2p/stream/voip
+    """
+    s = _strip_tail_tokens(stem)
+    for rx, base in PATTERNS:
+        if rx.search(s):
+            return base
     return None
 
-def walk_root(root: str) -> List[str]:
-    """从根目录递归收集所有 pcap 文件。"""
-    files: List[str] = []
-    root = os.path.abspath(os.path.expanduser(root))
-    for dp, _, fs in os.walk(root):
-        for fn in fs:
-            if fn.lower().endswith(PCAP_EXTS):
-                files.append(os.path.join(dp, fn))
-    return sorted(set(files))
+def infer_service_id_from_path(path: str) -> Optional[Tuple[int, str]]:
+    base = detect_base_service(os.path.splitext(os.path.basename(path))[0])
+    if not base:
+        return None
+    sid = _BASE_ID[base] + (6 if infer_vpn_flag(path) else 0)
+    return sid, SERVICE_NAMES[sid]
 
-def main():
-    # 允许命令行覆盖根目录：python deal_iscxvpn_labels.py /path/to/ISCX-VPN-NonVPN-2016
+def walk_dataset(root: str) -> List[str]:
+    out: List[str] = []
+    for d, subdirs, files in os.walk(root):
+        if IGNORE_HIDDEN:
+            subdirs[:] = [s for s in subdirs if not _is_hidden(s)]
+        for fn in files:
+            if IGNORE_HIDDEN and _is_hidden(fn):
+                continue
+            if not fn.lower().endswith(VALID_SUFFIXES):
+                continue
+            out.append(os.path.join(d, fn))
+    return out
+
+def ensure_dir_for_file(p: str) -> None:
+    d = os.path.dirname(p)
+    if d and not os.path.exists(d):
+        os.makedirs(d, exist_ok=True)
+
+# ===== 主流程 =====
+def main() -> None:
     root = DATASET_ROOT
-    if len(sys.argv) >= 2:
-        root = sys.argv[1]
+    if not os.path.isdir(root):
+        print(f"[error] DATASET_ROOT 不存在: {root}", file=sys.stderr)
+        sys.exit(1)
 
-    out_dir = ensure_dir(os.path.join("artifacts", DATASET_KEY))
-    out_csv = os.path.join(out_dir, "label_map.csv")
+    candidates = walk_dataset(root)
+    mapped: List[Tuple[str, int]] = []
+    skipped = 0
 
-    # 1) 扫描根目录
-    candidates = walk_root(root)
-
-    # 2) 自动贴标签
-    rows: List[Tuple[str, str]] = []
-    misses = 0
-    for p in candidates:
-        lab = infer_label(p)
-        if lab is None:
-            misses += 1
+    for path in candidates:
+        r = infer_service_id_from_path(path)
+        if r is None:
+            skipped += 1
             continue
-        rows.append((p, lab))
+        sid, _ = r
+        mapped.append((path, sid))
 
-    # 3) 去重（后写覆盖先写）
-    mapping: Dict[str, str] = {}
-    for p, lab in rows:
-        mapping[p] = lab
+    out_dir = os.path.join("artifacts", DATASET_KEY)
+    out_csv = os.path.join(out_dir, "label_map.csv")
+    vocab_csv = os.path.join(out_dir, "service_vocab.csv")
+    ensure_dir_for_file(out_csv)
+    ensure_dir_for_file(vocab_csv)
 
-    # 4) 写 CSV
     with open(out_csv, "w", encoding="utf-8", newline="") as f:
-        wr = csv.writer(f)
-        wr.writerow(["path", "label"])
-        for p, lab in sorted(mapping.items()):
-            wr.writerow([p, lab])
+        wr = csv.writer(f); wr.writerow(["path", "label"])
+        for p, sid in sorted(mapped, key=lambda x: (x[1], x[0])): wr.writerow([p, sid])
 
-    # 5) 打印统计
-    cnt = Counter(mapping.values())
+    with open(vocab_csv, "w", encoding="utf-8", newline="") as f:
+        wr = csv.writer(f); wr.writerow(["service_id", "service"])
+        for i, name in enumerate(SERVICE_NAMES): wr.writerow([i, name])
+
+    cnt = Counter([sid for _, sid in mapped])
     print(f"[root ] {root}")
     print(f"[done ] write -> {out_csv}")
-    print(f"[stats] files_total={len(candidates)}  labeled={len(mapping)}  skipped_unmatched={misses}")
-    print("[by label]")
-    for k in sorted(cnt):
-        print(f"  {k:24s} : {cnt[k]}")
+    print(f"[info ] vocab  -> {vocab_csv}")
+    print(f"[stats] files_total={len(candidates)}  labeled={len(mapped)}  skipped_unmatched={skipped}")
+    print("[by service_id]")
+    for i, name in enumerate(SERVICE_NAMES): print(f"  {i:2d} {name:>10s} : {cnt.get(i, 0)}")
 
 if __name__ == "__main__":
     main()
