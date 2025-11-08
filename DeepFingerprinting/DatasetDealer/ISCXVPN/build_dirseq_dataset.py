@@ -17,7 +17,7 @@ SCHEMA_KEY      = "dirseq"  # 固定
 ART_ROOT        = "artifacts"
 
 # 解析策略（变更会触发重算）
-PAYLOAD_ONLY    = False     # False: TCP/UDP所有包；True: 仅有负载的包
+PAYLOAD_ONLY    = True     # False: TCP/UDP所有包；True: 仅有负载的包
 MIN_LEN         = 3         # 短于此包数的流丢弃
 TRUNCATE_LEN    = 5000      # None 不截断；整数则超出截断到该值（不 padding）
 EXCLUDE_L4      = {("udp", 5353)}  # (proto,port) 黑名单（整条流丢弃）
