@@ -28,7 +28,7 @@ import dpkt
 
 # ========== 基本配置（按需修改） ==========
 # 输入根目录：一级子目录名为标签；其下递归查找 pcap/pcapng
-ROOT        = Path("/netdisk/dataset/vpn/data")
+ROOT        = Path("/netdisk/dataset/novpn/data")
 # 输出根目录：结构为  OUT_ROOT/<label>/<pcap_stem>.npz
 OUT_ROOT    = Path(__file__).resolve().parent / "npz"
 # 已存在是否覆盖
