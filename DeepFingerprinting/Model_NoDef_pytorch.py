@@ -52,7 +52,7 @@ class _ConvBlock(nn.Module):
 
 
 class DFNoDefNet(nn.Module):
-    def __init__(self) -> None:
+    def __init__(self, num_classes = 95) -> None:
         super().__init__()
 
         self.block1 = _ConvBlock(1, 32, kernel_size=8, pool_size=8, pool_stride=4, use_elu=True, dropout_p=0.1, bn_momentum=0.01)
@@ -72,7 +72,7 @@ class DFNoDefNet(nn.Module):
         self.bn_fc2 = nn.BatchNorm1d(512, momentum=0.01)
         self.drop_fc2 = nn.Dropout(p=0.5)
 
-        self.classifier = nn.Linear(512, 95)
+        self.classifier = nn.Linear(512, num_classes)
 
         self._init_fc()
 

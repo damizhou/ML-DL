@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-train_df_from_npz.py
+train_df_from_npzs.py
 
 使用 artifacts/<DATASET_KEY>/dirseq/{data.npz, labels.json} 训练 DFNoDefNet（PyTorch）
 - 数据层不做 padding；训练时按 MAX_LEN 右侧零填充/截断
