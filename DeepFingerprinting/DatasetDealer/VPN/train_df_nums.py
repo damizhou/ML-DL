@@ -23,6 +23,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import IterableDataset, DataLoader, get_worker_info
+from collections import Counter
 # —— 导入你的 DF 模型（保持工程结构）——
 ROOT = Path(__file__).resolve().parents[2]  # .../DeepFingerprinting
 if str(ROOT) not in sys.path:
@@ -32,8 +33,8 @@ from Model_NoDef_pytorch import DFNoDefNet  # noqa: E402
 # ====== Global Params =====
 # =========================
 # Paths
-NPZ_ROOT: str = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows"
-LABELS_JSON: str = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_labels.json"
+NPZ_ROOT: str = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz"
+LABELS_JSON: str = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/labels.json"
 RUNS_DIR: str = "./runs/df_npz"
 SAVE_BEST_PATH: str = str(Path(RUNS_DIR, "best.pt"))
 LOG_INTERVAL_STEPS: int = 200  # print every X optimizer steps
@@ -66,6 +67,14 @@ assert abs(TRAIN_RATIO + VAL_RATIO + TEST_RATIO - 1.0) < 1e-6
 
 HASH_SALT: str = f"df-split-v1-{SEED}"  # 影响划分但对每次运行稳定
 
+USE_CLASS_SUBSET: bool = True      # 先开着，想全量训练就改为 False
+MAX_CLASSES: int = 100
+CLASS_SUBSET_MODE: str = "first_k" # 可选: "first_k" | "alphabetical" | "random_k" | "whitelist"
+CLASS_WHITELIST: list[str] = []    # 当 mode="whitelist" 时，填域名列表
+FILTER_FILES_BY_CLASS: bool = True # 过滤掉非子集类别的 .npz 文件（更快）
+
+MIN_SAMPLES_PER_CLASS: int = 10_000
+VERIFY_SPLIT_COUNTS: bool = False       # 如要核对各类在train/val/test的实际数量，设True会再扫描一次
 # AMP / GPU
 USE_BF16_IF_AVAILABLE: bool = True  # 优先 bfloat16（无需GradScaler），否则 fallback 为 float16+GradScaler
 CUDNN_BENCHMARK: bool = True
@@ -73,6 +82,100 @@ CUDNN_BENCHMARK: bool = True
 # =========================
 # ======   Utilities  =====
 # =========================
+def _id2label_lookup(id2label: dict, i: int) -> str:
+    # id2label 的 key 可能是 str 也可能是 int，做个兼容
+    return id2label.get(i, id2label.get(str(i)))
+
+def build_class_subset(label2id_full: dict, id2label_full: dict) -> tuple[dict, dict, set[str]]:
+    labels_all = list(label2id_full.keys())
+
+    if not USE_CLASS_SUBSET or MAX_CLASSES is None:
+        # 不裁剪
+        # 统一把 id2label 的 key 转成 int，便于后续使用
+        id2label_norm = {int(k): v for k, v in id2label_full.items()} if any(isinstance(k, str) for k in id2label_full.keys()) else id2label_full
+        return label2id_full, id2label_norm, set(labels_all)
+
+    if CLASS_SUBSET_MODE == "first_k":
+        # 按原 id 顺序取前 K
+        all_ids = sorted(int(v) for v in label2id_full.values())
+        kept_ids = all_ids[:MAX_CLASSES]
+        kept_labels = [_id2label_lookup(id2label_full, i) for i in kept_ids]
+    elif CLASS_SUBSET_MODE == "alphabetical":
+        kept_labels = sorted(labels_all)[:MAX_CLASSES]
+    elif CLASS_SUBSET_MODE == "random_k":
+        rng = random.Random(SEED)
+        tmp = sorted(labels_all)
+        rng.shuffle(tmp)
+        kept_labels = tmp[:MAX_CLASSES]
+    elif CLASS_SUBSET_MODE == "whitelist":
+        kept_labels = [lbl for lbl in CLASS_WHITELIST if lbl in label2id_full]
+    else:
+        kept_labels = sorted(labels_all)[:MAX_CLASSES]
+
+    # 重新映射到 0..K-1
+    label2id_new = {lbl: i for i, lbl in enumerate(kept_labels)}
+    id2label_new = {i: lbl for lbl, i in label2id_new.items()}
+    return label2id_new, id2label_new, set(kept_labels)
+
+def _file_label_from_path(p: str) -> str:
+    # 你的 .npz 路径形如 .../npz/<domain>/<file>.npz
+    return os.path.basename(os.path.dirname(p))
+
+def scan_label_freq(files: list[str]) -> Counter:
+    """仅扫描 labels 计数，不读 flows，节省内存"""
+    cnt = Counter()
+    for p in files:
+        try:
+            with np.load(p, allow_pickle=True) as data:
+                for s in data["labels"]:
+                    cnt[str(s)] += 1
+        except Exception as e:
+            print(f"[warn] count-skip {p}: {e}")
+    return cnt
+
+def select_labels_topk_with_min_count(
+    files: list[str],
+    label2id_full: dict,
+    k: int,
+    min_count: int,
+) -> tuple[dict, dict, set[str], Counter]:
+    """按频次降序选出 >=min_count 的前 k 个标签，并重新映射到 0..k-1"""
+    cnt = scan_label_freq(files)
+    candidates = [(lbl, c) for lbl, c in cnt.items() if (lbl in label2id_full and c >= min_count)]
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    if len(candidates) < k:
+        print(f"[warn] only {len(candidates)} labels meet >= {min_count} samples; using all of them.")
+    kept = [lbl for (lbl, _) in candidates[:k]]
+    if not kept:
+        raise RuntimeError(f"No labels meet min_count={min_count}. Lower threshold or check data.")
+    label2id_new = {lbl: i for i, lbl in enumerate(kept)}
+    id2label_new = {i: lbl for lbl, i in label2id_new.items()}
+    return label2id_new, id2label_new, set(kept), cnt
+
+def compute_split_counts(files: list[str], label2id: dict) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """（可选）统计三拆分每类样本数，用与 _stable_hash01/_which_split 同一规则"""
+    n = len(label2id)
+    tr = np.zeros(n, dtype=np.int64)
+    va = np.zeros(n, dtype=np.int64)
+    te = np.zeros(n, dtype=np.int64)
+    rev = label2id  # 直接查
+    for path in files:
+        try:
+            with np.load(path, allow_pickle=True) as data:
+                labels = data["labels"]
+                for i, s in enumerate(labels):
+                    lab = str(s)
+                    if lab not in rev:
+                        continue
+                    p = _stable_hash01(lab, path, int(i))
+                    sp = _which_split(p)
+                    j = rev[lab]
+                    if sp == "train": tr[j] += 1
+                    elif sp == "val": va[j] += 1
+                    else: te[j] += 1
+        except Exception as e:
+            print(f"[warn] split-count skip {path}: {e}")
+    return tr, va, te
 
 def set_global_seed(seed: int) -> None:
     random.seed(seed)
@@ -448,13 +551,15 @@ def main() -> None:
     files = list_npz_files(NPZ_ROOT)
     if len(files) == 0:
         raise FileNotFoundError(f"No .npz files under: {NPZ_ROOT}")
-    label2id, id2label = load_label_maps(LABELS_JSON)
-    num_classes = 1 + max(int(v) for v in label2id.values())
-    print(f"Found files={len(files)}  classes={num_classes}")
 
-    # Split by files
-    train_files, val_files = split_files(files, TRAIN_VAL_SPLIT, seed=SEED)
-    print(f"train_files={len(train_files)}  val_files={len(val_files)}")
+    label2id_full, id2label_full = load_label_maps(LABELS_JSON)
+
+    label2id, id2label, kept_labels, freq_cnt = select_labels_topk_with_min_count(files, label2id_full, MAX_CLASSES,
+                                                                                  MIN_SAMPLES_PER_CLASS)
+    files = [f for f in files if _file_label_from_path(f) in kept_labels]
+
+    num_classes = len(label2id)
+    print(f"Found files={len(files)}  classes={num_classes}  (>= {MIN_SAMPLES_PER_CLASS}/class, top-{MAX_CLASSES})")
 
     # Build device/AMP
     device, amp_dtype, need_scaler = setup_device_amp()
@@ -467,7 +572,7 @@ def main() -> None:
     # Optional compile
     if USE_COMPILE and hasattr(torch, "compile"):
         try:
-            model = torch.compile(model, mode="max-autotune")
+            model = torch.compile(model, mode="reduce-overhead")
             print("[info] model compiled with torch.compile")
         except Exception as e:
             print(f"[warn] torch.compile failed, using eager. reason={e}")
@@ -479,12 +584,10 @@ def main() -> None:
     scaler = torch.amp.GradScaler('cuda') if need_scaler else None
 
     # Dataloaders
-    train_loader = make_loader(files, label2id, shuffle_files=SHUFFLE_FILES, shuffle_within=SHUFFLE_WITHIN_FILE,
-                               split="train")
+    train_loader = make_loader(files, label2id, shuffle_files=SHUFFLE_FILES, shuffle_within=SHUFFLE_WITHIN_FILE, split="train")
     val_loader = make_loader(files, label2id, shuffle_files=False, shuffle_within=False, split="val")
     test_loader = make_loader(files, label2id, shuffle_files=False, shuffle_within=False, split="test")
-    print("Split mode: per-sample hashing  (train/val/test = "
-          f"{TRAIN_RATIO:.2f}/{VAL_RATIO:.2f}/{TEST_RATIO:.2f})")
+    print(f"Split mode: per-sample hashing  (train/val/test = {TRAIN_RATIO:.2f}/{VAL_RATIO:.2f}/{TEST_RATIO:.2f})")
 
     best_val_acc = -1.0
     for ep in range(1, EPOCHS + 1):

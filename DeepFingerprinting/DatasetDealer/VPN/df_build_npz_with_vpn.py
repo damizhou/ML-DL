@@ -30,7 +30,7 @@ import dpkt
 # 输入根目录：一级子目录名为标签；其下递归查找 pcap/pcapng
 ROOT        = Path("/netdisk/dataset/vpn/data")
 # 输出根目录：结构为  OUT_ROOT/<label>/<pcap_stem>.npz
-OUT_ROOT    = Path(__file__).resolve().parent / "npz"
+OUT_ROOT    = Path(__file__).resolve().parent / "npz_longflows"
 # 已存在是否覆盖
 OVERWRITE   = False
 # 并发进程数
@@ -131,15 +131,14 @@ def pcap_to_npz_all_packets(
     pcap_path: str,
     label: Union[int, str],
     out_path: Optional[str] = None,
+    min_pkts_per_flow: int = 200,  # 只保留包数 > 200 的流
 ) -> str:
     """
     将一个 PCAP 写成一个 NPZ（方向符号序列）：
       - flows: object 数组，元素为各流的方向序列（np.int8，±1）
       - labels: object 数组，对应每条流的字符串标签
-    方向定义：对同一对端点(含端口)的 TCP/UDP 报文聚合为一条“无向流”，
-             以端点字典序较小的一侧作为“正向”：
-               当前包方向与“较小端 -> 较大端”一致记 +1；相反记 -1。
-    其他：跳过小于 20KB 的 pcap；过滤 mDNS(UDP:5353)；仅在写入前创建输出目录。
+    仅保留“包数 > min_pkts_per_flow”的流；若无符合条件的流则跳过该文件。
+    其他保持不变：跳过 <20KB 的 pcap；过滤 mDNS(UDP:5353)；仅在写入前创建输出目录。
     """
     # --- 文件大小校验：小于 20KB 直接跳过 ---
     size_bytes = Path(pcap_path).stat().st_size
@@ -168,7 +167,6 @@ def pcap_to_npz_all_packets(
                 proto_str = "TCP"
                 sport, dport = int(l3.data.sport), int(l3.data.dport)
             elif l3.p == dpkt.ip.IP_PROTO_UDP and isinstance(l3.data, dpkt.udp.UDP):
-                # 过滤 mDNS
                 if int(l3.data.sport) in EXCLUDE_UDP_PORTS or int(l3.data.dport) in EXCLUDE_UDP_PORTS:
                     continue
                 proto_str = "UDP"
@@ -193,21 +191,24 @@ def pcap_to_npz_all_packets(
         b = (int(b_ip), dport)
         if a <= b:
             key = (proto_str, (a_ip.compressed, sport), (b_ip.compressed, dport))
-            sign = np.int8(+1)   # 当前方向等于“较小端 -> 较大端”
+            sign = np.int8(+1)
         else:
             key = (proto_str, (b_ip.compressed, dport), (a_ip.compressed, sport))
-            sign = np.int8(-1)   # 当前方向与“较小端 -> 较大端”相反
+            sign = np.int8(-1)
 
         flows.setdefault(key, []).append(sign)
 
-    # 打包并保存
-    flow_seqs = [np.asarray(v, dtype=np.int8) for v in flows.values()]
-    labels = [label] * len(flow_seqs)
+    # —— 仅保留“包数 > min_pkts_per_flow”的流 ——
+    kept = [np.asarray(v, dtype=np.int8) for v in flows.values() if len(v) > min_pkts_per_flow]
+    if not kept:
+        raise RuntimeError(f"skip-few-pkts: no flows with > {min_pkts_per_flow} packets")
+
+    labels = [label] * len(kept)
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     np.savez_compressed(
         out_path,
-        flows=np.asarray(flow_seqs, dtype=object),
+        flows=np.asarray(kept, dtype=object),
         labels=np.asarray(labels, dtype=object),
     )
     return out_path
@@ -218,8 +219,11 @@ def _find_pcaps(root: Path) -> List[Tuple[str, str, str]]:
     返回 (pcap_abs_path, label, out_abs_path) 列表
     注意：不在此处创建输出目录，改为在写入 NPZ 前再创建。
     """
+    index = 0
     tasks: List[Tuple[str, str, str]] = []
     for label_dir in sorted([p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name):
+        if index == 100:
+            break
         label = label_dir.name
         for p in sorted(label_dir.rglob("*")):
             if not p.is_file():
@@ -229,6 +233,7 @@ def _find_pcaps(root: Path) -> List[Tuple[str, str, str]]:
             out_dir = OUT_ROOT / label
             out_path = out_dir / (p.stem + ".npz")
             tasks.append((str(p.resolve()), label, str(out_path.resolve())))
+        index += 1
     return tasks
 
 
