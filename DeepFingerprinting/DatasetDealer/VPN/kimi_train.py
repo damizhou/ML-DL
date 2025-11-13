@@ -13,6 +13,7 @@ import numpy as np
 import json
 from pathlib import Path
 from tqdm import tqdm
+from sklearn.metrics import f1_score, classification_report
 # —— 导入你的 DF 模型（保持工程结构）——
 ROOT = Path(__file__).resolve().parents[2]  # .../DeepFingerprinting
 if str(ROOT) not in sys.path:
@@ -22,11 +23,11 @@ from Model_NoDef_pytorch import DFNoDefNet  # noqa: E402
 
 # ==================== 2. 配置文件 ====================
 CONFIG = {
-    'data_dir': '/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_little',
-    'label_mapping': '/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_little/npz_longflows_little.json',
+    'data_dir': '/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows',
+    'label_mapping': '/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows/npz_longflows_labels.json',
     'batch_size': 128,  # 4090推荐128-256
     'learning_rate': 0.001,
-    'num_epochs': 50,
+    'num_epochs': 30,
     'seq_length': 5000,  # 模型输入固定长度
     'model_save_path': './best_model.pth',
     'num_workers': 4,  # 4090建议4-8
@@ -215,18 +216,21 @@ def train_epoch(model, train_loader, criterion, optimizer, scaler, config):
 
 # ==================== 6. 验证函数 ====================
 def validate(model, val_loader, criterion, config):
-    """验证模型"""
+    """验证模型，支持返回预测结果用于计算F1分数"""
     model.eval()
     total_loss = 0
     correct = 0
     total = 0
+
+    all_predictions = []
+    all_labels = []
 
     with torch.no_grad():
         for flows, labels in tqdm(val_loader, desc="验证"):
             flows = flows.to(config['device'], non_blocking=True)
             labels = labels.to(config['device'], non_blocking=True)
 
-            with torch.amp.autocast(enabled=config['mixed_precision'], device_type=config['device'].type):
+            with torch.amp.autocast(device_type='cuda', enabled=config['mixed_precision']):
                 outputs = model(flows)
                 loss = criterion(outputs, labels)
 
@@ -235,7 +239,14 @@ def validate(model, val_loader, criterion, config):
             total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
 
-    return total_loss / len(val_loader), correct / total
+            # 收集预测结果
+            all_predictions.extend(predicted.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+
+    avg_loss = total_loss / len(val_loader) if len(val_loader) > 0 else 0
+    avg_acc = correct / total if total > 0 else 0
+
+    return avg_loss, avg_acc, all_predictions, all_labels
 
 
 # ==================== 7. 主函数 ====================
@@ -278,21 +289,25 @@ def main():
         print(f"Epoch {epoch + 1}/{config['num_epochs']}")
 
         train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, scaler, config)
-        val_loss, val_acc = validate(model, val_loader, criterion, config)
+        val_loss, val_acc, val_preds, val_labels = validate(model, val_loader, criterion, config)
+
+        # 计算 macro F1
+        macro_f1 = f1_score(val_labels, val_preds, average='macro', zero_division=0)
 
         print(f"\n训练结果 - Loss: {train_loss:.4f}, Acc: {train_acc:.4f}")
-        print(f"验证结果 - Loss: {val_loss:.4f}, Acc: {val_acc:.4f}")
+        print(f"验证结果 - Loss: {val_loss:.4f}, Acc: {val_acc:.4f}, Macro F1: {macro_f1:.4f}")
 
         # 学习率调度
         scheduler.step(val_acc)
 
-        # 保存最佳模型
+        # 保存最佳模型 (基于验证准确率)
         if val_acc > best_acc:
             best_acc = val_acc
             checkpoint = {'epoch': epoch, 'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(), 'val_acc': val_acc, 'config': config, }
+                'optimizer_state_dict': optimizer.state_dict(), 'val_acc': val_acc, 'val_f1': macro_f1,
+                'config': config, }
             torch.save(checkpoint, config['model_save_path'])
-            print(f"✓ 保存最佳模型 (val_acc: {val_acc:.4f})")
+            print(f"✓ 保存最佳模型 (val_acc: {val_acc:.4f}, val_f1: {macro_f1:.4f})")
 
     # 在测试集上评估最佳模型
     print(f"\n{'=' * 50}")
@@ -302,11 +317,20 @@ def main():
     checkpoint = torch.load(config['model_save_path'], map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
 
-    test_loss, test_acc = validate(model, test_loader, criterion, config)
-    print(f"测试结果 - Loss: {test_loss:.4f}, Acc: {test_acc:.4f}")
+    # 测试并获取详细预测结果
+    test_loss, test_acc, test_preds, test_labels = validate(model, test_loader, criterion, config)
+
+    # 计算 macro F1
+    test_macro_f1 = f1_score(test_labels, test_preds, average='macro', zero_division=0)
+
+    print(f"测试结果 - Loss: {test_loss:.4f}, Acc: {test_acc:.4f}, Macro F1: {test_macro_f1:.4f}")
+
+    # 打印详细的分类报告
+    print("\n详细分类报告:")
+    print(classification_report(test_labels, test_preds, digits=4, zero_division=0))
 
     print(f"\n{'=' * 50}")
-    print(f"训练完成! 最佳验证准确率: {best_acc:.4f}, 测试准确率: {test_acc:.4f}")
+    print(f"训练完成! 最佳验证准确率: {best_acc:.4f}, 测试准确率: {test_acc:.4f}, 测试Macro F1: {test_macro_f1:.4f}")
 
 # ==================== 8. 入口 ====================
 if __name__ == '__main__':
