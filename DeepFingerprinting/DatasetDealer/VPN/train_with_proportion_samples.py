@@ -34,8 +34,11 @@ from Model_NoDef_pytorch import DFNoDefNet  # noqa: E402
 # ====== Global Params =====
 # =========================
 # Paths
+# NPZ_ROOT: str = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_little"
+# LABELS_JSON: str = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_little/npz_longflows_little.json"
+
 NPZ_ROOT: str = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows"
-LABELS_JSON: str = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_labels.json"
+LABELS_JSON: str = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows/npz_longflows_labels.json"
 RUNS_DIR: str = "./runs/df_npz"
 SAVE_BEST_PATH: str = str(Path(RUNS_DIR, "best.pt"))
 LOG_INTERVAL_STEPS: int = 200  # print every X optimizer steps
@@ -47,7 +50,6 @@ NUM_WORKERS: int = 4             # <=4 建议；每个 worker 只加载自己负
 PREFETCH_FACTOR: int = 4
 PIN_MEMORY: bool = True
 DROP_LAST: bool = True
-TRAIN_VAL_SPLIT: float = 0.9     # split by files
 SHUFFLE_FILES: bool = True       # shuffle file order each epoch
 SHUFFLE_WITHIN_FILE: bool = True # shuffle sample indices within file (per-file permutation)
 DROP_LAST_TRAIN: bool = True
@@ -66,7 +68,6 @@ SEED: int = 42
 TRAIN_RATIO: float = 0.8
 VAL_RATIO: float   = 0.1
 TEST_RATIO: float  = 0.1
-assert abs(TRAIN_RATIO + VAL_RATIO + TEST_RATIO - 1.0) < 1e-6
 
 HASH_SALT: str = f"df-split-v1-{SEED}"  # 影响划分但对每次运行稳定
 QUOTA_SCAN_ONLY: bool = True         # 只做配额扫描并输出结果；想继续训练就改为 False

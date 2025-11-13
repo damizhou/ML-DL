@@ -28,10 +28,14 @@ torch.backends.cuda.matmul.fp32_precision = "tf32"
 EPOCHS          = 30
 BATCH_SIZE      = 512
 MAX_LEN         = 5000
-MULTI_NPZ_ROOT  = '/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz'
+MULTI_NPZ_ROOT  = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_little"
 NUM_WORKERS     = 8
 NPZ_CACHE_FILES = 20000
-LABELS_JSON     = r'/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/labels.json'
+LABELS_JSON     = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_little/npz_longflows_little.json"
+
+
+# NPZ_ROOT: str = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_little"
+# LABELS_JSON: str = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_little/npz_longflows_little.json"
 
 # —— 导入你的 DF 模型（保持工程结构）——
 ROOT = Path(__file__).resolve().parents[2]  # .../DeepFingerprinting
@@ -316,8 +320,8 @@ def main(shared_cache: Dict = None): # 增加 shared_cache 参数
         va_loss, va_acc, va_f1m, _, _ = evaluate(val_loader, model, criterion, device, use_amp)
 
         # ------- 日志 -------
-        print(
-            f"[{ep:02d}/{EPOCHS}] train {tr_loss:.4f}/{tr_acc:.4f} | val {va_loss:.4f}/{va_acc:.4f} (macroF1={va_f1m:.4f if va_f1m is not None else 'N/A'})")
+        mf1 = "N/A" if va_f1m is None else f"{va_f1m:.4f}"
+        print(f"[{ep:02d}/{EPOCHS}] train {tr_loss:.4f}/{tr_acc:.4f} | val {va_loss:.4f}/{va_acc:.4f} (macroF1={mf1})")
     # ======= 测试集评估 =======
     # 训练完评测测试集
     use_amp = (device.type == "cuda")

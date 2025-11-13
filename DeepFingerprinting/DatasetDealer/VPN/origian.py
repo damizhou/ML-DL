@@ -23,8 +23,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import IterableDataset, DataLoader, get_worker_info
-from pathlib import Path
-from typing import Dict
 # —— 导入你的 DF 模型（保持工程结构）——
 ROOT = Path(__file__).resolve().parents[2]  # .../DeepFingerprinting
 if str(ROOT) not in sys.path:
@@ -42,7 +40,7 @@ LOG_INTERVAL_STEPS: int = 200  # print every X optimizer steps
 
 # Data / batching
 INPUT_LEN: int = 5000            # truncate/pad each sequence to this length
-BATCH_SIZE: int = 1024
+BATCH_SIZE: int = 2048
 NUM_WORKERS: int = 4             # <=4 建议；每个 worker 只加载自己负责的文件，避免重复加载
 PREFETCH_FACTOR: int = 4
 PIN_MEMORY: bool = True
@@ -50,8 +48,6 @@ DROP_LAST: bool = True
 TRAIN_VAL_SPLIT: float = 0.9     # split by files
 SHUFFLE_FILES: bool = True       # shuffle file order each epoch
 SHUFFLE_WITHIN_FILE: bool = True # shuffle sample indices within file (per-file permutation)
-DROP_LAST_TRAIN: bool = True
-DROP_LAST_EVAL: bool = False
 
 # Training
 EPOCHS: int = 30
@@ -69,10 +65,6 @@ TEST_RATIO: float  = 0.1
 assert abs(TRAIN_RATIO + VAL_RATIO + TEST_RATIO - 1.0) < 1e-6
 
 HASH_SALT: str = f"df-split-v1-{SEED}"  # 影响划分但对每次运行稳定
-QUOTA_SCAN_ONLY: bool = True         # 只做配额扫描并输出结果；想继续训练就改为 False
-QUOTA_PER_LABEL: int = 10000         # 每个标签最多保留的“前K个样本”
-VERIFY_FILE_LABEL: bool = True       # 快速路径：若npz内全是父目录同名标签，整包计数；否则退回逐标签计数
-PROGRESS_EVERY: int = 200            # 每处理多少个文件打印一次进度
 
 # AMP / GPU
 USE_BF16_IF_AVAILABLE: bool = True  # 优先 bfloat16（无需GradScaler），否则 fallback 为 float16+GradScaler
@@ -120,6 +112,14 @@ def load_label_maps(path: str) -> Tuple[dict, dict]:
     return label2id, id2label
 
 
+def split_files(files: List[str], ratio: float, seed: int) -> Tuple[List[str], List[str]]:
+    rng = random.Random(seed)
+    files_copy = files[:]
+    rng.shuffle(files_copy)
+    n_train = int(len(files_copy) * ratio)
+    return files_copy[:n_train], files_copy[n_train:]
+
+
 def _pad_truncate_to_len(arr: np.ndarray, target_len: int) -> np.ndarray:
     # arr: 1D int8 array with values in {-1, 1}
     n = arr.shape[0]
@@ -129,85 +129,6 @@ def _pad_truncate_to_len(arr: np.ndarray, target_len: int) -> np.ndarray:
     out[:n] = arr.astype(np.float32, copy=False)
     return out
 
-def _file_label_from_path(path: str) -> str:
-    """约定：标签 = 父目录名（.../npz/<label>/<file>.npz）"""
-    return Path(path).parent.name
-
-def quota_scan_first_k(files: List[str],
-                       quota: int,
-                       verify_file_label: bool = True,
-                       progress_every: int = 200) -> Dict[str, int]:
-    """
-    逐文件顺序扫描，只看 labels 数组（不读取 flows），
-    为每个标签最多累计前 quota 个样本。某标签达到 quota 后，后续文件里该标签将被整体跳过。
-    返回 acc[label] = 已累计数量。
-    """
-    acc: Dict[str, int] = {}
-    for i, path in enumerate(files, 1):
-        file_label = _file_label_from_path(path)
-        # 若该文件主标签已满额，整个文件可直接跳过（但需注意混合标签的情况）
-        fast_skip = (acc.get(file_label, 0) >= quota)
-
-        try:
-            with np.load(path, allow_pickle=True) as data:
-                labels = data["labels"]
-                n = int(len(labels))
-
-                if verify_file_label and not fast_skip:
-                    # 快速判定：是否全同一标签（与父目录同名）
-                    uniq = np.unique(labels.astype(str))
-                    if len(uniq) == 1 and uniq[0] == file_label:
-                        remain = quota - acc.get(file_label, 0)
-                        take = min(remain, n)
-                        if take > 0:
-                            acc[file_label] = acc.get(file_label, 0) + take
-                        # 不需要逐标签细分，下一文件
-                        pass
-                    else:
-                        # 混合标签：逐标签精确统计
-                        labs = labels.astype(str)
-                        u, cnts = np.unique(labs, return_counts=True)
-                        for lbl, c in zip(u.tolist(), cnts.tolist()):
-                            cur = acc.get(lbl, 0)
-                            if cur >= quota:
-                                continue
-                            add = min(quota - cur, int(c))
-                            if add > 0:
-                                acc[lbl] = cur + add
-                else:
-                    # 不做验证或 fast_skip=true（主标签已满），仍需考虑混合标签
-                    labs = labels.astype(str)
-                    u, cnts = np.unique(labs, return_counts=True)
-                    for lbl, c in zip(u.tolist(), cnts.tolist()):
-                        cur = acc.get(lbl, 0)
-                        if cur >= quota:
-                            continue
-                        add = min(quota - cur, int(c))
-                        if add > 0:
-                            acc[lbl] = cur + add
-        except Exception as e:
-            print(f"[warn] quota-scan skip {path}: {e}")
-
-        if i % progress_every == 0:
-            filled = sum(v >= quota for v in acc.values())
-            print(f"[quota] files={i}/{len(files)} labels_seen={len(acc)} filled={filled}")
-
-    return acc
-
-def print_quota_summary(acc: Dict[str, int], quota: int) -> None:
-    """输出：标签总数；每个未达 quota 的标签及其缺口"""
-    total_labels = len(acc)
-    filled_labels = sum(v >= quota for v in acc.values())
-    not_full = [(k, quota - v) for k, v in acc.items() if v < quota]
-    print("\n===== Quota Summary =====")
-    print(f"labels_total = {total_labels}")
-    print(f"labels_filled(>= {quota}) = {filled_labels}")
-    print(f"labels_not_full = {len(not_full)}")
-    if not_full:
-        print("\n# labels with deficit (< quota):  (sorted by deficit desc)")
-        for lbl, deficit in sorted(not_full, key=lambda x: x[1], reverse=True):
-            have = quota - deficit
-            print(f"{lbl}\tcount={have}\tdeficit={deficit}")
 
 def collate_pad_to_tensor(batch: List[Tuple[np.ndarray, int]]) -> Tuple[torch.Tensor, torch.Tensor]:
     # batch: list of (np.ndarray[int8], int label_id)
@@ -334,22 +255,6 @@ def update_counts(tp: np.ndarray, fp: np.ndarray, fn: np.ndarray,
         np.add.at(fp, yp[neq], 1)
         np.add.at(fn, yt[neq], 1)
 
-def estimate_split_sizes(files: List[str], label2id: dict) -> dict[str, int]:
-    tot = {"train": 0, "val": 0, "test": 0}
-    for path in files:
-        try:
-            with np.load(path, allow_pickle=True) as data:
-                labs = data["labels"]
-                for i, s in enumerate(labs):
-                    lab = str(s)
-                    if lab not in label2id:
-                        continue
-                    p = _stable_hash01(lab, path, int(i))
-                    sp = _which_split(p)
-                    tot[sp] += 1
-        except Exception as e:
-            print(f"[warn] size-scan skip {path}: {e}")
-    return tot
 
 # =========================
 # ======  Training    =====
@@ -397,7 +302,6 @@ def make_loader(
         seed=SEED,
         split=split,                  # <-- 新增
     )
-    drop_last = DROP_LAST_TRAIN if split == "train" else DROP_LAST_EVAL
     loader = DataLoader(
         ds,
         batch_size=BATCH_SIZE,
@@ -405,7 +309,7 @@ def make_loader(
         pin_memory=PIN_MEMORY,
         prefetch_factor=PREFETCH_FACTOR,
         persistent_workers=(NUM_WORKERS > 0),
-        drop_last=drop_last,                 # ← 只训练丢尾，验证/测试保留尾批
+        drop_last=DROP_LAST,
         collate_fn=collate_pad_to_tensor
     )
     return loader
@@ -547,10 +451,11 @@ def main() -> None:
     label2id, id2label = load_label_maps(LABELS_JSON)
     num_classes = 1 + max(int(v) for v in label2id.values())
     print(f"Found files={len(files)}  classes={num_classes}")
-    sizes = estimate_split_sizes(files, label2id)
-    print(f"[split] samples train/val/test = {sizes['train']}/{sizes['val']}/{sizes['test']}")
-    if sizes["val"] == 0 or sizes["test"] == 0:
-        print("[warn] val/test has 0 samples — check class subset or batch settings")
+
+    # Split by files
+    train_files, val_files = split_files(files, TRAIN_VAL_SPLIT, seed=SEED)
+    print(f"train_files={len(train_files)}  val_files={len(val_files)}")
+
     # Build device/AMP
     device, amp_dtype, need_scaler = setup_device_amp()
 
