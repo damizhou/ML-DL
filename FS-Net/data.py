@@ -24,11 +24,11 @@ from torch.nn.utils.rnn import pad_sequence
 from config import DEFAULT_DATA_CONFIG, DataConfig
 
 try:
-    import scapy.all as scapy
-    SCAPY_AVAILABLE = True
+    import dpkt
+    DPKT_AVAILABLE = True
 except ImportError:
-    SCAPY_AVAILABLE = False
-    print("Warning: scapy not installed. PCAP processing will not be available.")
+    DPKT_AVAILABLE = False
+    print("Warning: dpkt not installed. PCAP processing will not be available.")
 
 try:
     from tqdm import tqdm
@@ -40,6 +40,8 @@ except ImportError:
 def extract_packet_lengths(pcap_path: str, config: DataConfig = None) -> List[int]:
     """Extract packet length sequence from PCAP file.
 
+    Uses dpkt for fast streaming PCAP parsing (memory efficient).
+
     Args:
         pcap_path: Path to PCAP file
         config: Data configuration
@@ -47,43 +49,64 @@ def extract_packet_lengths(pcap_path: str, config: DataConfig = None) -> List[in
     Returns:
         List of packet lengths (positive for outgoing, negative for incoming)
     """
-    if not SCAPY_AVAILABLE:
-        raise ImportError("scapy is required for PCAP processing")
+    if not DPKT_AVAILABLE:
+        raise ImportError("dpkt is required for PCAP processing")
+
+    import socket
 
     if config is None:
         config = DEFAULT_DATA_CONFIG
 
-    try:
-        packets = scapy.rdpcap(pcap_path)
-    except Exception as e:
-        print(f"Error reading {pcap_path}: {e}")
-        return []
-
     lengths = []
     first_src = None
 
-    for packet in packets:
-        if 'IP' not in packet:
-            continue
+    try:
+        with open(pcap_path, 'rb') as f:
+            # Try pcap format first, then pcapng
+            try:
+                pcap = dpkt.pcap.Reader(f)
+            except ValueError:
+                f.seek(0)
+                pcap = dpkt.pcapng.Reader(f)
 
-        # Get packet length
-        pkt_len = len(packet)
-        if pkt_len > config.max_packet_len:
-            pkt_len = config.max_packet_len
+            for ts, buf in pcap:
+                # Parse Ethernet frame
+                try:
+                    eth = dpkt.ethernet.Ethernet(buf)
+                except Exception:
+                    continue
 
-        # Determine direction based on first packet's source
-        if first_src is None:
-            first_src = packet['IP'].src
-            lengths.append(pkt_len)  # First packet is outgoing (positive)
-        else:
-            if packet['IP'].src == first_src:
-                lengths.append(pkt_len)  # Outgoing (positive)
-            else:
-                lengths.append(-pkt_len)  # Incoming (negative)
+                # Check for IP layer
+                if not isinstance(eth.data, dpkt.ip.IP):
+                    continue
 
-        # Limit sequence length
-        if len(lengths) >= config.max_seq_len:
-            break
+                ip = eth.data
+                pkt_len = len(buf)
+
+                # Cap packet length
+                if pkt_len > config.max_packet_len:
+                    pkt_len = config.max_packet_len
+
+                # Get source IP as string
+                src_ip = socket.inet_ntoa(ip.src)
+
+                # Determine direction based on first packet's source
+                if first_src is None:
+                    first_src = src_ip
+                    lengths.append(pkt_len)  # First packet is outgoing (positive)
+                else:
+                    if src_ip == first_src:
+                        lengths.append(pkt_len)  # Outgoing (positive)
+                    else:
+                        lengths.append(-pkt_len)  # Incoming (negative)
+
+                # Limit sequence length
+                if len(lengths) >= config.max_seq_len:
+                    break
+
+    except Exception as e:
+        print(f"Error reading {pcap_path}: {e}")
+        return []
 
     return lengths
 
@@ -327,8 +350,8 @@ def pcap_to_sequences(
         output_dir: Output directory for JSON files
         config: Data configuration
     """
-    if not SCAPY_AVAILABLE:
-        raise ImportError("scapy is required for PCAP processing")
+    if not DPKT_AVAILABLE:
+        raise ImportError("dpkt is required for PCAP processing")
 
     config = config or DEFAULT_DATA_CONFIG
     input_path = Path(input_dir)

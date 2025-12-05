@@ -22,7 +22,7 @@ from engine import train_one_epoch, evaluate, save_checkpoint, load_checkpoint, 
 # =============================================================================
 
 # Data
-DATA_PATH = "/home/dev/DL/FS-Net/data/iscx_fsnet"
+DATA_PATH = "/home/pcz/DL/ML&DL/FS-Net/data/iscx_fsnet"
 NUM_CLASSES = 12          # ISCX: 12 classes
 
 # Model (Paper parameters: Section V-B-2)
@@ -42,7 +42,7 @@ PATIENCE = 20             # Early stopping patience
 NUM_WORKERS = 4           # Data loading workers
 
 # Output
-OUTPUT_DIR = "/home/dev/DL/FS-Net/checkpoints"
+OUTPUT_DIR = "/home/pcz/DL/ML&DL/FS-Net/checkpoints"
 
 # Device
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

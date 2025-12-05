@@ -5,30 +5,18 @@ Paper: AppScanner: Automatic Fingerprinting of Smartphone Apps from Encrypted Ne
 Conference: Euro S&P 2015
 
 Usage:
-    # Train on PCAP directory
-    python train.py --mode train --data_dir ./data/apps --num_classes 110
-
-    # Train on pre-extracted features (CSV)
-    python train.py --mode train --csv_path ./data/features.csv
-
-    # Evaluate trained model
-    python train.py --mode eval --checkpoint ./output/best_model.pth --data_dir ./data/apps
-
-    # Extract features from PCAP
-    python train.py --mode extract --data_dir ./data/apps --output ./data/features.pkl
-
-    # Compare NN vs RF approaches
-    python train.py --mode compare --data_dir ./data/apps
+    python train.py
 """
 
 import os
 import sys
-import argparse
 import json
 import pickle
 import numpy as np
 import torch
 from datetime import datetime
+from dataclasses import dataclass
+from typing import List, Optional
 
 from config import AppScannerConfig, get_config
 from models import AppScannerNN, AppScannerDeep, build_model
@@ -42,127 +30,63 @@ from data import (
 from engine import train, test, train_random_forest, compare_approaches
 
 
-def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description='AppScanner: Fingerprinting Smartphone Apps',
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
+# =============================================================================
+# Configuration - Modify these parameters directly
+# =============================================================================
 
-    # Mode
-    parser.add_argument(
-        '--mode', type=str, default='train',
-        choices=['train', 'eval', 'extract', 'compare'],
-        help='Running mode',
-    )
+@dataclass
+class TrainArgs:
+    """Training arguments - modify these directly instead of command line."""
 
-    # Data
-    parser.add_argument(
-        '--data_dir', type=str, default='./data',
-        help='Directory containing PCAP files organized by class',
-    )
-    parser.add_argument(
-        '--csv_path', type=str, default=None,
-        help='Path to CSV file with pre-extracted features',
-    )
-    parser.add_argument(
-        '--features_path', type=str, default=None,
-        help='Path to saved features (pickle)',
-    )
+    # Mode: 'train', 'eval', 'extract', 'compare'
+    mode: str = 'train'
 
-    # Model
-    parser.add_argument(
-        '--model_type', type=str, default='nn',
-        choices=['nn', 'deep', 'rf'],
-        help='Model type to use',
-    )
-    parser.add_argument(
-        '--num_classes', type=int, default=None,
-        help='Number of classes (auto-detected if not specified)',
-    )
-    parser.add_argument(
-        '--input_dim', type=int, default=54,
-        help='Input feature dimension',
-    )
-    parser.add_argument(
-        '--hidden_dims', type=int, nargs='+', default=[256, 128, 64],
-        help='Hidden layer dimensions',
-    )
-    parser.add_argument(
-        '--dropout', type=float, default=0.3,
-        help='Dropout rate',
-    )
+    # Data paths
+    data_dir: str = './data'                    # Directory with PCAP files
+    csv_path: Optional[str] = None              # CSV file with features
+    features_path: str = '/home/pcz/DL/ML&DL/AppScanner/data/iscxvpn/iscxvpn_appscanner.pkl'  # Pre-extracted features
 
-    # Training
-    parser.add_argument(
-        '--epochs', type=int, default=100,
-        help='Number of training epochs',
-    )
-    parser.add_argument(
-        '--batch_size', type=int, default=128,
-        help='Batch size',
-    )
-    parser.add_argument(
-        '--lr', type=float, default=0.001,
-        help='Learning rate',
-    )
-    parser.add_argument(
-        '--weight_decay', type=float, default=1e-4,
-        help='Weight decay (L2 regularization)',
-    )
-    parser.add_argument(
-        '--patience', type=int, default=10,
-        help='Early stopping patience',
-    )
+    # Model configuration
+    model_type: str = 'nn'                      # 'nn', 'deep', or 'rf'
+    num_classes: int = 12                       # ISCXVPN has 12 classes
+    input_dim: int = 54                         # 54 statistical features
+    hidden_dims: List[int] = None               # Default: [256, 128, 64]
+    dropout: float = 0.3
+
+    # Training parameters
+    epochs: int = 100
+    batch_size: int = 128
+    lr: float = 0.001
+    weight_decay: float = 1e-4
+    patience: int = 10
 
     # AppScanner specific
-    parser.add_argument(
-        '--prediction_threshold', type=float, default=0.9,
-        help='Confidence threshold for predictions',
-    )
-    parser.add_argument(
-        '--min_flow_length', type=int, default=7,
-        help='Minimum packets per flow',
-    )
-    parser.add_argument(
-        '--max_flow_length', type=int, default=260,
-        help='Maximum packets per flow',
-    )
+    prediction_threshold: float = 0.9
+    min_flow_length: int = 7
+    max_flow_length: int = 260
 
-    # Random Forest (for comparison)
-    parser.add_argument(
-        '--n_estimators', type=int, default=100,
-        help='Number of trees in Random Forest',
-    )
+    # Random Forest
+    n_estimators: int = 100
 
     # Paths
-    parser.add_argument(
-        '--output_dir', type=str, default='./output',
-        help='Output directory',
-    )
-    parser.add_argument(
-        '--checkpoint', type=str, default=None,
-        help='Path to model checkpoint for evaluation',
-    )
+    output_dir: str = './output'
+    checkpoint: Optional[str] = None
 
-    # Device
-    parser.add_argument(
-        '--device', type=str, default='auto',
-        choices=['auto', 'cuda', 'cpu'],
-        help='Device to use',
-    )
+    # Device: 'auto', 'cuda', 'cpu'
+    device: str = 'auto'
 
     # Misc
-    parser.add_argument(
-        '--seed', type=int, default=42,
-        help='Random seed',
-    )
-    parser.add_argument(
-        '--num_workers', type=int, default=4,
-        help='Number of data loading workers',
-    )
+    seed: int = 42
+    num_workers: int = 4
 
-    return parser.parse_args()
+    def __post_init__(self):
+        if self.hidden_dims is None:
+            self.hidden_dims = [256, 128, 64]
+
+
+def get_args() -> TrainArgs:
+    """Get training arguments."""
+    return TrainArgs()
 
 
 def set_seed(seed: int):
@@ -427,7 +351,7 @@ def mode_compare(args, config):
 
 
 def main():
-    args = parse_args()
+    args = get_args()
 
     # Set seed
     set_seed(args.seed)
@@ -442,10 +366,12 @@ def main():
     print("\nConfiguration:")
     print(f"  Mode: {args.mode}")
     print(f"  Model: {args.model_type}")
+    print(f"  Data: {args.features_path or args.data_dir}")
     print(f"  Device: {config.device}")
     print(f"  Epochs: {config.epochs}")
     print(f"  Batch size: {config.batch_size}")
     print(f"  Learning rate: {config.learning_rate}")
+    print(f"  Num classes: {config.num_classes}")
     print(f"  Prediction threshold: {config.prediction_threshold}")
     print()
 

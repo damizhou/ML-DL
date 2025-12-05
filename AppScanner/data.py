@@ -20,10 +20,10 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 try:
-    from scapy.all import rdpcap, IP, TCP, UDP
-    SCAPY_AVAILABLE = True
+    import dpkt
+    DPKT_AVAILABLE = True
 except ImportError:
-    SCAPY_AVAILABLE = False
+    DPKT_AVAILABLE = False
 
 from scipy import stats as scipy_stats
 
@@ -187,8 +187,8 @@ class PCAPProcessor:
             min_flow_length: Minimum packets per flow
             max_flow_length: Maximum packets per flow
         """
-        if not SCAPY_AVAILABLE:
-            raise ImportError("scapy is required for PCAP processing")
+        if not DPKT_AVAILABLE:
+            raise ImportError("dpkt is required for PCAP processing")
 
         self.burst_threshold = burst_threshold
         self.min_flow_length = min_flow_length
@@ -198,35 +198,9 @@ class PCAPProcessor:
             max_packets=max_flow_length,
         )
 
-    def get_flow_key(self, packet) -> Optional[Tuple]:
-        """Extract flow key from packet."""
-        if not packet.haslayer(IP):
-            return None
-
-        ip = packet[IP]
-        src_ip = ip.src
-        dst_ip = ip.dst
-
-        if packet.haslayer(TCP):
-            src_port = packet[TCP].sport
-            dst_port = packet[TCP].dport
-            protocol = 6
-        elif packet.haslayer(UDP):
-            src_port = packet[UDP].sport
-            dst_port = packet[UDP].dport
-            protocol = 17
-        else:
-            return None
-
-        # Normalize flow key (smaller IP first)
-        if (src_ip, src_port) < (dst_ip, dst_port):
-            return (src_ip, dst_ip, src_port, dst_port, protocol)
-        else:
-            return (dst_ip, src_ip, dst_port, src_port, protocol)
-
     def extract_flows(self, pcap_path: str) -> List[Flow]:
         """
-        Extract flows from PCAP file.
+        Extract flows from PCAP file using dpkt.
 
         Args:
             pcap_path: Path to PCAP file
@@ -234,24 +208,59 @@ class PCAPProcessor:
         Returns:
             List of Flow objects
         """
-        packets = rdpcap(pcap_path)
+        import socket
 
         # Group packets by flow
         flow_packets = defaultdict(list)
 
-        for pkt in packets:
-            flow_key = self.get_flow_key(pkt)
-            if flow_key is None:
-                continue
+        try:
+            with open(pcap_path, 'rb') as f:
+                # Try pcap format first, then pcapng
+                try:
+                    pcap = dpkt.pcap.Reader(f)
+                except ValueError:
+                    f.seek(0)
+                    pcap = dpkt.pcapng.Reader(f)
 
-            if pkt.haslayer(IP):
-                pkt_info = {
-                    'timestamp': float(pkt.time),
-                    'length': len(pkt),
-                    'src_ip': pkt[IP].src,
-                    'dst_ip': pkt[IP].dst,
-                }
-                flow_packets[flow_key].append(pkt_info)
+                for ts, buf in pcap:
+                    try:
+                        eth = dpkt.ethernet.Ethernet(buf)
+                    except Exception:
+                        continue
+
+                    if not isinstance(eth.data, dpkt.ip.IP):
+                        continue
+
+                    ip = eth.data
+                    src_ip = socket.inet_ntoa(ip.src)
+                    dst_ip = socket.inet_ntoa(ip.dst)
+
+                    if isinstance(ip.data, dpkt.tcp.TCP):
+                        tcp = ip.data
+                        src_port, dst_port, protocol = tcp.sport, tcp.dport, 6
+                    elif isinstance(ip.data, dpkt.udp.UDP):
+                        udp = ip.data
+                        src_port, dst_port, protocol = udp.sport, udp.dport, 17
+                    else:
+                        continue
+
+                    # Normalize flow key (smaller IP first)
+                    if (src_ip, src_port) < (dst_ip, dst_port):
+                        flow_key = (src_ip, dst_ip, src_port, dst_port, protocol)
+                    else:
+                        flow_key = (dst_ip, src_ip, dst_port, src_port, protocol)
+
+                    pkt_info = {
+                        'timestamp': float(ts),
+                        'length': len(buf),
+                        'src_ip': src_ip,
+                        'dst_ip': dst_ip,
+                    }
+                    flow_packets[flow_key].append(pkt_info)
+
+        except Exception as e:
+            print(f"Error reading {pcap_path}: {e}")
+            return []
 
         # Convert to Flow objects
         flows = []

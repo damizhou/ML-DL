@@ -25,11 +25,11 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 # =============================================================================
 
 # Input paths
-LABEL_MAP_PATH = "/home/dev/DL/DeepFingerprinting/DatasetDealer/ISCXVPN/artifacts/iscx/label_map.csv"
-VOCAB_PATH = "/home/dev/DL/DeepFingerprinting/DatasetDealer/ISCXVPN/artifacts/iscx/service_vocab.csv"
+LABEL_MAP_PATH = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/ISCXVPN/artifacts/iscx/label_map.csv"
+VOCAB_PATH = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/ISCXVPN/artifacts/iscx/service_vocab.csv"
 
 # Output path
-OUTPUT_DIR = "/home/dev/DL/FS-Net/data/iscx_fsnet"
+OUTPUT_DIR = "/home/pcz/DL/ML&DL/FS-Net/data/iscx_fsnet"
 
 # Flow extraction parameters
 MIN_PACKETS = 10          # Minimum packets per flow
