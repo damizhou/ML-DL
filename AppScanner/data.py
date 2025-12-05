@@ -624,10 +624,37 @@ def save_dataset(
 
 
 def load_dataset(load_path: str) -> Tuple[np.ndarray, np.ndarray, Dict[int, str]]:
-    """Load processed dataset from file."""
+    """Load processed dataset from file.
+
+    Supports two formats:
+    1. Old format: {'features', 'labels', 'label_map'}
+    2. New format: {'train_features', 'train_labels', 'test_features', 'test_labels', 'label_map'}
+    """
     with open(load_path, 'rb') as f:
         data = pickle.load(f)
-    return data['features'], data['labels'], data['label_map']
+
+    # Check format and load accordingly
+    if 'features' in data:
+        # Old format
+        features = data['features']
+        labels = data['labels']
+        label_map = data['label_map']
+    elif 'train_features' in data:
+        # New format from iscxvpn_processor.py - combine train and test
+        features = np.concatenate([data['train_features'], data['test_features']], axis=0)
+        labels = np.concatenate([data['train_labels'], data['test_labels']], axis=0)
+        label_map = data['label_map']
+    else:
+        raise KeyError(f"Unknown dataset format. Keys: {list(data.keys())}")
+
+    # Clean data: replace NaN/Inf with 0
+    nan_count = np.isnan(features).sum()
+    inf_count = np.isinf(features).sum()
+    if nan_count > 0 or inf_count > 0:
+        print(f"Warning: Found {nan_count} NaN and {inf_count} Inf values, replacing with 0")
+        features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+
+    return features, labels, label_map
 
 
 if __name__ == '__main__':

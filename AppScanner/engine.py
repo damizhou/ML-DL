@@ -344,7 +344,7 @@ def train(
             break
 
     # Load best model
-    checkpoint = torch.load(best_model_path, map_location=device)
+    checkpoint = torch.load(best_model_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
 
     print("-" * 60)
@@ -424,6 +424,7 @@ def test(
 
     report = classification_report(
         all_labels, all_predictions,
+        labels=list(range(num_classes)),
         target_names=target_names,
         zero_division=0,
     )

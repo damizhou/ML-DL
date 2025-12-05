@@ -245,7 +245,7 @@ def mode_eval(args, config):
         args.checkpoint = os.path.join(config.output_dir, 'best_model.pth')
 
     print(f"Loading checkpoint: {args.checkpoint}")
-    checkpoint = torch.load(args.checkpoint, map_location=config.device)
+    checkpoint = torch.load(args.checkpoint, map_location=config.device, weights_only=False)
 
     # Load config from checkpoint
     if 'config' in checkpoint:
