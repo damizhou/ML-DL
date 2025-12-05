@@ -25,20 +25,20 @@ from engine import train_one_epoch, evaluate, save_checkpoint, load_checkpoint, 
 DATA_PATH = "/home/dev/DL/FS-Net/data/iscx_fsnet"
 NUM_CLASSES = 12          # ISCX: 12 classes
 
-# Model
-EMBED_DIM = 128           # Embedding dimension
-HIDDEN_DIM = 256          # Increase hidden dimension
-NUM_LAYERS = 2            # Number of GRU layers
-DROPOUT = 0.2             # Reduce dropout
-ALPHA = 1.0               # Reconstruction loss weight
+# Model (Paper parameters: Section V-B-2)
+EMBED_DIM = 128           # Embedding dimension (paper: 128)
+HIDDEN_DIM = 128          # Hidden dimension (paper: 128)
+NUM_LAYERS = 2            # Number of GRU layers (paper: 2)
+DROPOUT = 0.3             # Dropout rate (paper: 0.3)
+ALPHA = 1.0               # Reconstruction loss weight (paper: 1)
 USE_NO_DECODER = False    # True: FS-Net-ND, False: FS-Net
-USE_CLASS_WEIGHT = False  # Disable class weights (was hurting performance)
+USE_CLASS_WEIGHT = False  # Disable class weights
 
-# Training
+# Training (Paper parameters)
 EPOCHS = 200
 BATCH_SIZE = 128
-LEARNING_RATE = 0.001     # Increase learning rate
-PATIENCE = 20             # Increase patience
+LEARNING_RATE = 0.0005    # Learning rate (paper: 0.0005)
+PATIENCE = 20             # Early stopping patience
 NUM_WORKERS = 4           # Data loading workers
 
 # Output

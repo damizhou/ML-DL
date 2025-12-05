@@ -1,0 +1,16 @@
+# YaTC Refactored Requirements
+# Python 3.12, PyTorch 2.9
+
+# Core dependencies
+torch>=2.9.0
+numpy>=1.24.0
+pillow>=10.0.0
+
+# Optional: for evaluation metrics
+scikit-learn>=1.3.0
+
+# Optional: for PCAP processing
+scapy>=2.5.0
+
+# Development dependencies
+pytest>=7.4.0

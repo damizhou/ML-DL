@@ -285,7 +285,8 @@ def build_dataloader(
     batch_size: int = 128,
     num_workers: int = 4,
     shuffle: bool = True,
-    config: DataConfig = None
+    config: DataConfig = None,
+    use_direction: bool = True
 ) -> DataLoader:
     """Build DataLoader for FS-Net.
 
@@ -296,11 +297,12 @@ def build_dataloader(
         num_workers: Number of data loading workers
         shuffle: Whether to shuffle
         config: Data configuration
+        use_direction: If True, use signed packet lengths (direction info)
 
     Returns:
         DataLoader
     """
-    dataset = FlowSequenceDataset(data_path, split, config)
+    dataset = FlowSequenceDataset(data_path, split, config, use_direction=use_direction)
 
     return DataLoader(
         dataset,

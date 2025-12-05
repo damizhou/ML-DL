@@ -46,11 +46,11 @@ NUM_WORKERS = 32           # Number of parallel workers
 
 
 try:
-    import dpkt
-    DPKT_AVAILABLE = True
+    from scapy.all import PcapReader, IP, TCP, UDP
+    SCAPY_AVAILABLE = True
 except ImportError:
-    DPKT_AVAILABLE = False
-    print("Error: dpkt is required. Install with: pip install dpkt")
+    SCAPY_AVAILABLE = False
+    print("Error: scapy is required. Install with: pip install scapy")
 
 try:
     from tqdm import tqdm

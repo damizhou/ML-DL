@@ -1,7 +1,37 @@
+# IDE
 .idea/
+.vscode/
+*.swp
+*.swo
+
+# Data directories (too large)
 Dataset/
-DeepFingerprinting/DatasetDealer/ISCXVPN/artifacts/
 Test/
-YaTC/github/
-YaTC/ISCXVPN/github/data/
+data/
+DeepFingerprinting/DatasetDealer/ISCXVPN/artifacts/
+*/data/*
+
+# Checkpoints and models
+checkpoints/
+output_dir/
+*.pth
+*.pt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.eggs/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Large files
+*.pcap
+
+# OS
+.DS_Store
+Thumbs.db
 YaTC/ISCXVPN/github/

@@ -17,7 +17,7 @@ class EmbeddingConfig:
 
     The embedding layer converts packet lengths to dense vectors.
     """
-    vocab_size: int = 1501  # Packet lengths: 0-1500 + padding
+    vocab_size: int = 3002  # Signed lengths: -1500 to +1500 -> 1 to 3001, 0 for padding
     embed_dim: int = 128
     padding_idx: int = 0
 
