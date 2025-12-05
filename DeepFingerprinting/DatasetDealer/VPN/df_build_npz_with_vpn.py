@@ -30,7 +30,7 @@ import dpkt
 # 输入根目录：一级子目录名为标签；其下递归查找 pcap/pcapng
 ROOT        = Path("/netdisk/dataset/vpn/data")
 # 输出根目录：结构为  OUT_ROOT/<label>/<pcap_stem>.npz
-OUT_ROOT    = Path(__file__).resolve().parent / "npz_longflows_little"
+OUT_ROOT    = Path(__file__).resolve().parent / "vpn_npz_longflows_all"
 # 已存在是否覆盖
 OVERWRITE   = False
 # 并发进程数
@@ -219,11 +219,8 @@ def _find_pcaps(root: Path) -> List[Tuple[str, str, str]]:
     返回 (pcap_abs_path, label, out_abs_path) 列表
     注意：不在此处创建输出目录，改为在写入 NPZ 前再创建。
     """
-    index = 0
     tasks: List[Tuple[str, str, str]] = []
     for label_dir in sorted([p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name):
-        if index == 10:
-            break
         label = label_dir.name
         for p in sorted(label_dir.rglob("*")):
             if not p.is_file():
@@ -233,7 +230,6 @@ def _find_pcaps(root: Path) -> List[Tuple[str, str, str]]:
             out_dir = OUT_ROOT / label
             out_path = out_dir / (p.stem + ".npz")
             tasks.append((str(p.resolve()), label, str(out_path.resolve())))
-        index += 1
     return tasks
 
 

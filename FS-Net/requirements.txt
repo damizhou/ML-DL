@@ -1,0 +1,15 @@
+# FS-Net Requirements
+# Python 3.12, PyTorch 2.9
+
+# Core dependencies
+torch>=2.9.0
+numpy>=1.24.0
+
+# PCAP processing
+scapy>=2.5.0
+
+# Utilities
+tqdm>=4.65.0
+
+# Testing
+pytest>=7.4.0

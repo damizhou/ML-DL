@@ -23,8 +23,8 @@ from Model_NoDef_pytorch import DFNoDefNet  # noqa: E402
 
 # ==================== 2. 配置文件 ====================
 CONFIG = {
-    'data_dir': '/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/vpn_npz_longflows_all',
-    'label_mapping': '/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/vpn_npz_longflows_all/labels.json',
+    'data_dir': '/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/NOVPN/novpn_npz_longflows_all',
+    'label_mapping': '/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/NOVPN/novpn_npz_longflows_all/labels.json',
     'batch_size': 512,  # 4090推荐128-256
     'learning_rate': 0.001,
     'num_epochs': 100,
