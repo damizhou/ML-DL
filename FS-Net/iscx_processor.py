@@ -46,11 +46,11 @@ NUM_WORKERS = 32           # Number of parallel workers
 
 
 try:
-    from scapy.all import PcapReader, IP, TCP, UDP
-    SCAPY_AVAILABLE = True
+    import dpkt
+    DPKT_AVAILABLE = True
 except ImportError:
-    SCAPY_AVAILABLE = False
-    print("Error: scapy is required. Install with: pip install scapy")
+    DPKT_AVAILABLE = False
+    print("Error: dpkt is required. Install with: pip install dpkt")
 
 try:
     from tqdm import tqdm
@@ -61,38 +61,59 @@ except ImportError:
 
 def extract_flows_from_pcap(pcap_path: str) -> List[List[int]]:
     """
-    Extract flows from PCAP using streaming reader (memory efficient).
+    Extract flows from PCAP using dpkt (faster than scapy).
 
-    Uses PcapReader to read packets one by one instead of loading entire file.
+    Uses dpkt to read packets with minimal parsing overhead.
     """
-    if not SCAPY_AVAILABLE:
-        raise ImportError("scapy is required")
+    if not DPKT_AVAILABLE:
+        raise ImportError("dpkt is required")
+
+    import socket
 
     # Group packets by flow: flow_key -> [(time, length, src_ip), ...]
     flows = defaultdict(list)
 
     try:
-        with PcapReader(pcap_path) as reader:
-            for pkt in reader:
-                if not pkt.haslayer(IP):
+        with open(pcap_path, 'rb') as f:
+            try:
+                pcap = dpkt.pcap.Reader(f)
+            except ValueError:
+                # Try pcapng format
+                f.seek(0)
+                pcap = dpkt.pcapng.Reader(f)
+
+            for ts, buf in pcap:
+                try:
+                    eth = dpkt.ethernet.Ethernet(buf)
+                except Exception:
                     continue
 
-                ip = pkt[IP]
+                if not isinstance(eth.data, dpkt.ip.IP):
+                    continue
 
-                if pkt.haslayer(TCP):
-                    sport, dport, proto = pkt[TCP].sport, pkt[TCP].dport, 6
-                elif pkt.haslayer(UDP):
-                    sport, dport, proto = pkt[UDP].sport, pkt[UDP].dport, 17
+                ip = eth.data
+                pkt_len = len(buf)
+
+                # Get src/dst IP as string
+                src_ip = socket.inet_ntoa(ip.src)
+                dst_ip = socket.inet_ntoa(ip.dst)
+
+                if isinstance(ip.data, dpkt.tcp.TCP):
+                    tcp = ip.data
+                    sport, dport, proto = tcp.sport, tcp.dport, 6
+                elif isinstance(ip.data, dpkt.udp.UDP):
+                    udp = ip.data
+                    sport, dport, proto = udp.sport, udp.dport, 17
                 else:
                     continue
 
                 # Use tuple as key (more memory efficient than dataclass)
-                if (ip.src, sport) < (ip.dst, dport):
-                    flow_key = (ip.src, ip.dst, sport, dport, proto)
+                if (src_ip, sport) < (dst_ip, dport):
+                    flow_key = (src_ip, dst_ip, sport, dport, proto)
                 else:
-                    flow_key = (ip.dst, ip.src, dport, sport, proto)
+                    flow_key = (dst_ip, src_ip, dport, sport, proto)
 
-                flows[flow_key].append((float(pkt.time), len(pkt), ip.src))
+                flows[flow_key].append((float(ts), pkt_len, src_ip))
     except Exception:
         return []
 
