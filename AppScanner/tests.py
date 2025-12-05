@@ -309,8 +309,9 @@ class TestDataset(unittest.TestCase):
         train_loader, val_loader, test_loader, norm_params = create_dataloaders(
             self.features, self.labels,
             batch_size=16,
-            test_ratio=0.2,
+            train_ratio=0.8,
             val_ratio=0.1,
+            test_ratio=0.1,
         )
 
         # Check loaders exist
@@ -324,12 +325,13 @@ class TestDataset(unittest.TestCase):
             break
 
     def test_dataloader_split_ratios(self):
-        """Test that data is split correctly."""
+        """Test that data is split correctly (8:1:1)."""
         train_loader, val_loader, test_loader, _ = create_dataloaders(
             self.features, self.labels,
             batch_size=16,
-            test_ratio=0.2,
+            train_ratio=0.8,
             val_ratio=0.1,
+            test_ratio=0.1,
         )
 
         train_size = len(train_loader.dataset)
@@ -339,8 +341,8 @@ class TestDataset(unittest.TestCase):
         total = train_size + val_size + test_size
         self.assertEqual(total, self.n_samples)
 
-        # Test size should be ~20%
-        self.assertAlmostEqual(test_size / self.n_samples, 0.2, places=1)
+        # With 8:1:1 split, test size should be ~10%
+        self.assertAlmostEqual(test_size / self.n_samples, 0.1, places=1)
 
 
 class TestEngine(unittest.TestCase):

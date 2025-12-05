@@ -515,20 +515,24 @@ def create_dataloaders(
     features: np.ndarray,
     labels: np.ndarray,
     batch_size: int = 128,
-    test_ratio: float = 0.2,
+    train_ratio: float = 0.8,
     val_ratio: float = 0.1,
+    test_ratio: float = 0.1,
     seed: int = 42,
     num_workers: int = 4,
 ) -> Tuple[DataLoader, DataLoader, DataLoader, Tuple[np.ndarray, np.ndarray]]:
     """
     Create train, validation, and test dataloaders.
 
+    Default split ratio is 8:1:1 (train:val:test) by flow.
+
     Args:
         features: Feature matrix
         labels: Label array
         batch_size: Batch size
-        test_ratio: Test set ratio
-        val_ratio: Validation ratio (from training set)
+        train_ratio: Training set ratio (default 0.8)
+        val_ratio: Validation set ratio (default 0.1)
+        test_ratio: Test set ratio (default 0.1)
         seed: Random seed
         num_workers: Number of data loading workers
 
@@ -544,13 +548,14 @@ def create_dataloaders(
     n_samples = len(labels)
     indices = np.random.permutation(n_samples)
 
-    # Split
-    n_test = int(n_samples * test_ratio)
-    n_val = int((n_samples - n_test) * val_ratio)
+    # Split with 8:1:1 ratio
+    n_train = int(n_samples * train_ratio)
+    n_val = int(n_samples * val_ratio)
+    # n_test = n_samples - n_train - n_val (remaining)
 
-    test_indices = indices[:n_test]
-    val_indices = indices[n_test:n_test + n_val]
-    train_indices = indices[n_test + n_val:]
+    train_indices = indices[:n_train]
+    val_indices = indices[n_train:n_train + n_val]
+    test_indices = indices[n_train + n_val:]
 
     # Create datasets
     train_dataset = AppScannerDataset(
@@ -624,11 +629,12 @@ def save_dataset(
 
 
 def load_dataset(load_path: str) -> Tuple[np.ndarray, np.ndarray, Dict[int, str]]:
-    """Load processed dataset from file.
+    """Load processed dataset from file (combined all splits).
 
-    Supports two formats:
+    Supports three formats:
     1. Old format: {'features', 'labels', 'label_map'}
-    2. New format: {'train_features', 'train_labels', 'test_features', 'test_labels', 'label_map'}
+    2. Train/test format: {'train_features', 'train_labels', 'test_features', 'test_labels', 'label_map'}
+    3. Train/val/test format: {'train_features', 'val_features', 'test_features', ...}
     """
     with open(load_path, 'rb') as f:
         data = pickle.load(f)
@@ -640,9 +646,19 @@ def load_dataset(load_path: str) -> Tuple[np.ndarray, np.ndarray, Dict[int, str]
         labels = data['labels']
         label_map = data['label_map']
     elif 'train_features' in data:
-        # New format from iscxvpn_processor.py - combine train and test
-        features = np.concatenate([data['train_features'], data['test_features']], axis=0)
-        labels = np.concatenate([data['train_labels'], data['test_labels']], axis=0)
+        # New format from iscxvpn_processor.py - combine all splits
+        parts_features = [data['train_features']]
+        parts_labels = [data['train_labels']]
+
+        if 'val_features' in data:
+            parts_features.append(data['val_features'])
+            parts_labels.append(data['val_labels'])
+
+        parts_features.append(data['test_features'])
+        parts_labels.append(data['test_labels'])
+
+        features = np.concatenate(parts_features, axis=0)
+        labels = np.concatenate(parts_labels, axis=0)
         label_map = data['label_map']
     else:
         raise KeyError(f"Unknown dataset format. Keys: {list(data.keys())}")
@@ -655,6 +671,132 @@ def load_dataset(load_path: str) -> Tuple[np.ndarray, np.ndarray, Dict[int, str]
         features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
 
     return features, labels, label_map
+
+
+def load_dataset_split(load_path: str) -> Tuple[
+    Tuple[np.ndarray, np.ndarray],  # train
+    Tuple[np.ndarray, np.ndarray],  # val
+    Tuple[np.ndarray, np.ndarray],  # test
+    Dict[int, str],  # label_map
+]:
+    """Load processed dataset with pre-defined splits (train/val/test).
+
+    Returns:
+        train_data: (train_features, train_labels)
+        val_data: (val_features, val_labels)
+        test_data: (test_features, test_labels)
+        label_map: class label mapping
+    """
+    with open(load_path, 'rb') as f:
+        data = pickle.load(f)
+
+    if 'train_features' not in data:
+        raise KeyError("Dataset does not contain pre-split data. Use load_dataset() instead.")
+
+    train_features = data['train_features']
+    train_labels = data['train_labels']
+    test_features = data['test_features']
+    test_labels = data['test_labels']
+    label_map = data['label_map']
+
+    # Check for validation set
+    if 'val_features' in data:
+        val_features = data['val_features']
+        val_labels = data['val_labels']
+    else:
+        # No validation set, create empty arrays
+        val_features = np.array([]).reshape(0, train_features.shape[1])
+        val_labels = np.array([], dtype=train_labels.dtype)
+
+    # Clean data: replace NaN/Inf with 0
+    for arr_name, arr in [('train', train_features), ('val', val_features), ('test', test_features)]:
+        nan_count = np.isnan(arr).sum()
+        inf_count = np.isinf(arr).sum()
+        if nan_count > 0 or inf_count > 0:
+            print(f"Warning: Found {nan_count} NaN and {inf_count} Inf in {arr_name}, replacing with 0")
+
+    train_features = np.nan_to_num(train_features, nan=0.0, posinf=0.0, neginf=0.0)
+    val_features = np.nan_to_num(val_features, nan=0.0, posinf=0.0, neginf=0.0)
+    test_features = np.nan_to_num(test_features, nan=0.0, posinf=0.0, neginf=0.0)
+
+    return (train_features, train_labels), (val_features, val_labels), (test_features, test_labels), label_map
+
+
+def create_dataloaders_from_split(
+    train_data: Tuple[np.ndarray, np.ndarray],
+    val_data: Tuple[np.ndarray, np.ndarray],
+    test_data: Tuple[np.ndarray, np.ndarray],
+    batch_size: int = 128,
+    num_workers: int = 4,
+) -> Tuple[DataLoader, DataLoader, DataLoader, Tuple[np.ndarray, np.ndarray]]:
+    """
+    Create dataloaders from pre-split data.
+
+    Args:
+        train_data: (features, labels) for training
+        val_data: (features, labels) for validation
+        test_data: (features, labels) for testing
+        batch_size: Batch size
+        num_workers: Number of data loading workers
+
+    Returns:
+        train_loader, val_loader, test_loader, (mean, std)
+    """
+    train_features, train_labels = train_data
+    val_features, val_labels = val_data
+    test_features, test_labels = test_data
+
+    # Create training dataset and compute normalization params
+    train_dataset = AppScannerDataset(
+        train_features,
+        train_labels,
+        normalize=True,
+    )
+    mean, std = train_dataset.get_normalization_params()
+
+    # Create val/test datasets with same normalization
+    val_dataset = AppScannerDataset(
+        val_features,
+        val_labels,
+        normalize=True,
+        mean=mean,
+        std=std,
+    )
+
+    test_dataset = AppScannerDataset(
+        test_features,
+        test_labels,
+        normalize=True,
+        mean=mean,
+        std=std,
+    )
+
+    # Create loaders
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+    )
+
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+    )
+
+    return train_loader, val_loader, test_loader, (mean, std)
 
 
 if __name__ == '__main__':

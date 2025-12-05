@@ -113,11 +113,10 @@ class AppScannerConfig:
     # Data Processing
     # ==========================================================================
 
-    # Train/test split ratio
-    test_ratio: float = 0.2
-
-    # Validation ratio (from training set)
+    # Dataset split ratio (8:1:1 for train:val:test)
+    train_ratio: float = 0.8
     val_ratio: float = 0.1
+    test_ratio: float = 0.1
 
     # Random seed for reproducibility
     seed: int = 42

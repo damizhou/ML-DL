@@ -164,27 +164,29 @@ def mode_train(args, config):
     print(f"Features shape: {features.shape}")
     print(f"Number of classes: {config.num_classes}")
 
-    # Create dataloaders
+    # Create dataloaders with 8:1:1 split (train:val:test)
     train_loader, val_loader, test_loader, norm_params = create_dataloaders(
         features, labels,
         batch_size=config.batch_size,
-        test_ratio=config.test_ratio,
+        train_ratio=config.train_ratio,
         val_ratio=config.val_ratio,
+        test_ratio=config.test_ratio,
         seed=config.seed,
         num_workers=config.num_workers,
     )
+    input_dim = features.shape[1]
 
     # Create model
     if args.model_type == 'nn':
         model = AppScannerNN(
-            input_dim=features.shape[1],
+            input_dim=input_dim,
             num_classes=config.num_classes,
             hidden_dims=config.hidden_dims,
             dropout=config.dropout,
         )
     elif args.model_type == 'deep':
         model = AppScannerDeep(
-            input_dim=features.shape[1],
+            input_dim=input_dim,
             num_classes=config.num_classes,
             hidden_dim=config.hidden_dims[0],
             num_layers=4,
@@ -256,11 +258,13 @@ def mode_eval(args, config):
     # Load data
     features, labels, label_map = load_data(args, config)
 
-    # Create test loader
+    # Create test loader (use all data for testing)
     _, _, test_loader, _ = create_dataloaders(
         features, labels,
         batch_size=config.batch_size,
-        test_ratio=1.0,  # Use all data for testing
+        train_ratio=0.0,
+        val_ratio=0.0,
+        test_ratio=1.0,
         num_workers=config.num_workers,
     )
 

@@ -523,11 +523,16 @@ def compare_approaches(
     print("=" * 40)
 
     from data import create_dataloaders
+    total_samples = len(X_train) + len(X_test)
+    test_ratio = len(X_test) / total_samples
+    train_ratio = 1.0 - test_ratio
     train_loader, val_loader, test_loader, _ = create_dataloaders(
         np.vstack([X_train, X_test]),
         np.hstack([y_train, y_test]),
         batch_size=config.batch_size,
-        test_ratio=len(X_test) / (len(X_train) + len(X_test)),
+        train_ratio=train_ratio,
+        val_ratio=0.0,
+        test_ratio=test_ratio,
     )
 
     model = AppScannerNN(

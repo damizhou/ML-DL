@@ -51,8 +51,7 @@ MIN_PACKETS = 7           # Minimum packets per flow (AppScanner default)
 MAX_PACKETS = 260         # Maximum packets per flow (AppScanner default)
 FLOW_TIMEOUT = 60.0       # Flow timeout in seconds
 
-# Dataset split
-TRAIN_RATIO = 0.8
+# Random seed for reproducibility
 RANDOM_SEED = 42
 
 # Multi-process
@@ -340,28 +339,14 @@ def process_iscxvpn_dataset():
     print(f"\nTotal flows extracted: {len(labels)}")
     print(f"Feature shape: {features.shape}")
 
-    # Shuffle and split
-    indices = np.random.permutation(len(labels))
-    n_train = int(len(labels) * TRAIN_RATIO)
-
-    train_indices = indices[:n_train]
-    test_indices = indices[n_train:]
-
-    train_features = features[train_indices]
-    train_labels = labels[train_indices]
-    test_features = features[test_indices]
-    test_labels = labels[test_indices]
-
     # Create output directory
     output_path = Path(OUTPUT_DIR)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Save as pickle
+    # Save as pickle (all data, no split - split will be done during training)
     data = {
-        'train_features': train_features,
-        'train_labels': train_labels,
-        'test_features': test_features,
-        'test_labels': test_labels,
+        'features': features,
+        'labels': labels,
         'label_map': vocab,
         'num_classes': len(vocab),
         'num_features': 54,
@@ -375,18 +360,16 @@ def process_iscxvpn_dataset():
     npz_path = output_path / 'iscxvpn_appscanner.npz'
     np.savez(
         npz_path,
-        train_features=train_features,
-        train_labels=train_labels,
-        test_features=test_features,
-        test_labels=test_labels,
+        features=features,
+        labels=labels,
     )
 
     # Print summary
     print("\n" + "=" * 50)
     print("Processing Complete!")
     print("=" * 50)
-    print(f"Train samples: {len(train_labels)}")
-    print(f"Test samples: {len(test_labels)}")
+    print(f"Total samples: {len(labels)}")
+    print(f"Num classes: {len(vocab)}")
     print("\nFlows per class:")
     for label_id in sorted(class_counts.keys()):
         print(f"  {vocab[label_id]}: {class_counts[label_id]}")
