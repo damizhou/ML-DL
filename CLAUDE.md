@@ -1,95 +1,114 @@
 # CLAUDE.md
 
-本文件为 Claude Code (claude.ai/code) 在此代码仓库中工作时提供指导。
+本文件为 Claude Code 在此代码仓库中工作时提供指导。
 
 ## 项目概述
 
-本仓库包含用于加密网络流量分类的深度学习模型实现。主要项目是 **YaTC**（Yet Another Traffic Classifier），一个基于掩码自编码器的流量Transformer，发表于 AAAI 2023。此外还包含用于网站指纹攻击的 **DeepFingerprinting** 模型。
+本仓库包含用于**加密网络流量分类**的多种深度学习模型实现，涵盖不同的技术路线：
+
+| 项目 | 方法 | 输入特征 | 模型架构 |
+|------|------|----------|----------|
+| **FS-Net** | 流序列网络 | 数据包长度序列（±方向） | Bi-GRU + 自编码器 |
+| **DeepFingerprinting** | 网站指纹攻击 | 方向序列（±1） | 1D CNN |
+| **AppScanner** | 应用指纹识别 | 统计特征（54维） | MLP / Random Forest |
+| **YaTC** | 流量Transformer | MFR图像（40×40） | ViT + MAE |
 
 ## 主要依赖
 
-- Python 3.8
-- PyTorch 1.9.0
-- timm 0.3.2（YaTC 必需，版本敏感）
-- scikit-learn 0.24.2
-- scapy（用于 pcap 处理）
-- PIL/Pillow
-- numpy 1.19.5
-
-## 常用命令
-
-### YaTC 预训练
-```bash
-cd YaTC/github
-python pre-train.py --batch_size 128 --blr 1e-3 --steps 150000 --mask_ratio 0.9
+```
+python >= 3.8
+torch >= 1.9.0
+numpy
+scikit-learn
+dpkt          # PCAP 解析
+scapy         # PCAP 处理（可选）
+timm == 0.3.2 # YaTC 专用，版本敏感
 ```
 
-### YaTC 微调
+## 项目结构
+
+```
+ML&DL/
+├── FS-Net/                 # 流序列网络（Bi-GRU）
+│   ├── models.py           # FSNet, FSNetND 模型
+│   ├── data.py             # 数据加载
+│   ├── engine.py           # 训练/评估循环
+│   ├── run_train.py        # 训练入口
+│   └── iscx_processor.py   # ISCXVPN 数据处理
+│
+├── DeepFingerprinting/     # 网站指纹攻击（1D CNN）
+│   ├── Model_NoDef_pytorch.py  # DFNoDefNet 模型
+│   └── DatasetDealer/          # 数据处理脚本
+│       ├── VPN/                # VPN 流量处理
+│       ├── NOVPN/              # 非VPN 流量处理
+│       └── ISCXVPN/            # ISCXVPN 数据集处理
+│
+├── AppScanner/             # 应用指纹识别（MLP/RF）
+│   ├── models.py           # AppScannerNN, AppScannerRF
+│   ├── data.py             # 特征提取
+│   ├── config.py           # 配置（54维统计特征）
+│   └── train.py            # 训练脚本
+│
+└── YaTC/                   # 流量Transformer（ViT + MAE）
+    ├── github/             # 原始实现
+    │   ├── models_YaTC.py  # MAE_YaTC, TraFormer_YaTC
+    │   ├── pre-train.py    # 预训练脚本
+    │   ├── fine-tune.py    # 微调脚本
+    │   └── data_process.py # PCAP → MFR 转换
+    └── refactor/           # 重构版本
+```
+
+## 快速开始
+
+### FS-Net 训练
+```bash
+cd FS-Net
+python run_train.py
+# 配置在 run_train.py 顶部硬编码
+# BATCH_SIZE=2048, EPOCHS=200, NUM_CLASSES=12
+```
+
+### DeepFingerprinting 训练
+```bash
+cd DeepFingerprinting/DatasetDealer/VPN
+python train_df_simple.py
+# 需要先准备 NPZ 数据文件和 labels.json
+```
+
+### AppScanner 训练
+```bash
+cd AppScanner
+python train.py
+# 使用 54 维统计特征，支持 NN/RF/SVM 分类器
+```
+
+### YaTC 预训练 + 微调
 ```bash
 cd YaTC/github
+# 预训练
+python pre-train.py --batch_size 128 --blr 1e-3 --steps 150000 --mask_ratio 0.9
+# 微调
 python fine-tune.py --blr 2e-3 --epochs 200 --data_path ./data/ISCXVPN2016_MFR --nb_classes 7
 ```
 
-关键微调参数：
-- `--data_path`：MFR 数据集路径（例如 `./data/ISCXVPN2016_MFR`）
-- `--nb_classes`：类别数量（ISCXVPN2016: 7, ISCXTor2016: 8, USTC-TFC2016: 20, CICIoT2022: 10）
-- `--finetune`：预训练模型检查点路径（默认：`./output_dir/YaTC_pretrained_model.pth`）
+## 数据集支持
 
-### 数据处理（PCAP 转 MFR）
-```bash
-cd YaTC/github
-# 使用 data_process.py 中的 MFR_generator() 将 pcap 文件转换为 MFR 矩阵
-```
+| 数据集 | FS-Net | DF | AppScanner | YaTC |
+|--------|--------|-----|------------|------|
+| ISCXVPN2016 | ✓ (12类) | ✓ | ✓ | ✓ (7类) |
+| ISCXTor2016 | - | ✓ | - | ✓ (8类) |
+| USTC-TFC2016 | - | - | - | ✓ (20类) |
+| CICIoT2022 | - | - | - | ✓ (10类) |
 
-## 架构说明
+## 评估指标
 
-### YaTC (YaTC/github/)
+所有项目统一使用以下指标：
+- **Accuracy**: 分类准确率
+- **Precision / Recall / F1**: 宏平均（macro）
+- **TPR / FPR**: 每类真阳性率/假阳性率
 
-采用多级流表示（MFR）的两阶段训练方法：
+## 注意事项
 
-1. **预训练阶段**：掩码自编码器（`models_YaTC.py` 中的 `MAE_YaTC`）
-   - 默认 90% 掩码比例
-   - 编码器：4 个 Transformer 块，192 维嵌入，16 个注意力头
-   - 解码器：2 个 Transformer 块，128 维嵌入
-   - 输入：40x40 灰度图像（MFR 矩阵）
-
-2. **微调阶段**：流量 Transformer（`models_YaTC.py` 中的 `TraFormer_YaTC`）
-   - 继承自 timm 的 VisionTransformer
-   - 自定义 `PatchEmbed` 用于 MFR 矩阵（patch_size=2）
-   - 逐层学习率衰减
-
-**数据格式**：MFR 将 pcap 流转换为 40x40 灰度图像：
-- 每个流取 5 个数据包
-- 每个数据包：160 个十六进制字符头部 + 480 个十六进制字符载荷 = 320 字节
-- 总计：5 * 320 = 1600 字节 = 40x40 矩阵
-
-**目录结构**：
-- `data_process.py`：将 pcap 文件转换为 MFR PNG 图像
-- `engine.py`：训练循环（`pretrain_one_epoch`、`train_one_epoch`、`evaluate`）
-- `util/`：学习率调度器、位置嵌入、杂项工具
-
-### DeepFingerprinting (DeepFingerprinting/)
-
-用于流量指纹识别的一维 CNN（`Model_NoDef_pytorch.py` 中的 `DFNoDefNet`）：
-- 4 个卷积块，包含 BatchNorm、MaxPool、Dropout
-- 输入：5000 长度的方向序列
-- 全连接层：512 -> 512 -> num_classes
-
-**DatasetDealer/**：用于将 VPN/非VPN 流量数据集处理为训练格式的脚本。
-
-## 数据集结构
-
-YaTC 期望的格式：
-```
-data/<数据集名称>/
-├── train/
-│   ├── class1/
-│   │   └── *.png
-│   └── class2/
-│       └── *.png
-└── test/
-    ├── class1/
-    └── class2/
-```
-
-预训练模型位置：`./output_dir/pretrained-model.pth`
+1. **GPU 优化**：确保启用 cuDNN（`torch.backends.cudnn.enabled = True`）
+2. **Windows 兼容**：多进程 DataLoader 建议设置 `num_workers=0`
+3. **版本敏感**：YaTC 必须使用 `timm==0.3.2`
