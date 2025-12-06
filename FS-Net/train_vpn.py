@@ -15,6 +15,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
+from sklearn.metrics import precision_score, recall_score, f1_score, classification_report
 
 from models import create_fsnet
 
@@ -267,9 +268,25 @@ def main():
     print("\n" + "=" * 60)
     print("Test Results")
     print("=" * 60)
-    model.load_state_dict(torch.load(best_model_path))
-    test_acc, preds, labels = evaluate(model, test_loader, device)
-    print(f"Test Accuracy: {test_acc:.4f}")
+    model.load_state_dict(torch.load(best_model_path, weights_only=True))
+    test_acc, preds, labels_arr = evaluate(model, test_loader, device)
+
+    # 计算各项指标
+    precision = precision_score(labels_arr, preds, average='macro', zero_division=0)
+    recall = recall_score(labels_arr, preds, average='macro', zero_division=0)
+    f1 = f1_score(labels_arr, preds, average='macro', zero_division=0)
+
+    print(f"Test Accuracy:  {test_acc:.4f}")
+    print(f"Test Precision: {precision:.4f}")
+    print(f"Test Recall:    {recall:.4f}")
+    print(f"Test F1 Score:  {f1:.4f}")
+
+    # 打印分类报告
+    print("\n" + "-" * 60)
+    print("Classification Report:")
+    print("-" * 60)
+    target_names = [id2label[i] for i in range(num_classes)]
+    print(classification_report(labels_arr, preds, target_names=target_names, zero_division=0))
 
 
 if __name__ == "__main__":
