@@ -512,6 +512,8 @@ def main():
                         help="输出目录")
     parser.add_argument("--procs", type=int, default=16,
                         help="并行进程数")
+    parser.add_argument("--max_labels", type=int, default=0,
+                        help="最大处理标签数（0=不限制）")
     args = parser.parse_args()
 
     config = Config()
@@ -525,6 +527,8 @@ def main():
     print(f"输入目录: {config.root}")
     print(f"输出目录: {config.output}")
     print(f"并行进程数: {config.max_procs}")
+    if args.max_labels > 0:
+        print(f"标签数限制: {args.max_labels}")
     print()
     print("将为以下模型生成数据:")
     print("  1. FS-Net:            数据包长度序列 (±int16)")
@@ -540,6 +544,13 @@ def main():
         return
 
     labels = sorted(label_to_pcaps.keys())
+
+    # 限制标签数量
+    if args.max_labels > 0 and len(labels) > args.max_labels:
+        print(f"\n[限制] 只处理前 {args.max_labels} 个标签（共 {len(labels)} 个）")
+        labels = labels[:args.max_labels]
+        label_to_pcaps = {k: v for k, v in label_to_pcaps.items() if k in labels}
+
     label2id = {label: i for i, label in enumerate(labels)}
     id2label = {i: label for label, i in label2id.items()}
 
