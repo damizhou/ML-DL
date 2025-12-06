@@ -416,3 +416,170 @@ def get_dataset_info(data_path: Union[str, Path]) -> Dict:
     info['num_classes'] = len(info['classes'])
 
     return info
+
+
+# =============================================================================
+# Pickle Dataset Support (new format from iscx_processor.py)
+# =============================================================================
+
+import pickle
+
+
+def load_pickle_dataset(pickle_path: str) -> Tuple[List[List[int]], np.ndarray, Dict[int, str]]:
+    """Load dataset from pickle file.
+
+    Args:
+        pickle_path: Path to pickle file
+
+    Returns:
+        sequences: List of variable-length sequences
+        labels: numpy array of labels
+        label_map: mapping from label_id to class name
+    """
+    with open(pickle_path, 'rb') as f:
+        data = pickle.load(f)
+
+    sequences = data['sequences']
+    labels = data['labels']
+    label_map = data['label_map']
+
+    return sequences, labels, label_map
+
+
+class SequenceDataset(Dataset):
+    """Dataset for pre-loaded sequences (from pickle)."""
+
+    def __init__(
+        self,
+        sequences: List[List[int]],
+        labels: np.ndarray,
+        max_packet_len: int = 1500,
+        use_direction: bool = True
+    ):
+        """Initialize dataset.
+
+        Args:
+            sequences: List of variable-length sequences (signed packet lengths)
+            labels: numpy array of labels
+            max_packet_len: Maximum packet length for index mapping
+            use_direction: If True, use signed lengths
+        """
+        self.sequences = sequences
+        self.labels = labels
+        self.max_packet_len = max_packet_len
+        self.use_direction = use_direction
+
+    def __len__(self) -> int:
+        return len(self.sequences)
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
+        lengths = self.sequences[idx]
+        label = int(self.labels[idx])
+
+        if self.use_direction:
+            # Signed lengths: [-1500, 1500] -> [1, 3001], 0 for padding
+            indices = [l + self.max_packet_len + 1 for l in lengths]
+        else:
+            # Unsigned: [1, 1500], 0 for padding
+            indices = [abs(l) for l in lengths]
+
+        sequence = torch.tensor(indices, dtype=torch.long)
+
+        return sequence, label
+
+
+def create_dataloaders(
+    sequences: List[List[int]],
+    labels: np.ndarray,
+    batch_size: int = 128,
+    train_ratio: float = 0.8,
+    val_ratio: float = 0.1,
+    test_ratio: float = 0.1,
+    seed: int = 42,
+    num_workers: int = 4,
+    max_packet_len: int = 1500,
+    use_direction: bool = True
+) -> Tuple[DataLoader, DataLoader, DataLoader]:
+    """Create train, validation, and test dataloaders.
+
+    Default split ratio is 8:1:1 (train:val:test) by flow.
+
+    Args:
+        sequences: List of variable-length sequences
+        labels: numpy array of labels
+        batch_size: Batch size
+        train_ratio: Training set ratio (default 0.8)
+        val_ratio: Validation set ratio (default 0.1)
+        test_ratio: Test set ratio (default 0.1)
+        seed: Random seed
+        num_workers: Number of data loading workers
+        max_packet_len: Maximum packet length
+        use_direction: If True, use signed lengths
+
+    Returns:
+        train_loader, val_loader, test_loader
+    """
+    np.random.seed(seed)
+
+    # Shuffle indices
+    n_samples = len(labels)
+    indices = np.random.permutation(n_samples)
+
+    # Split with 8:1:1 ratio
+    n_train = int(n_samples * train_ratio)
+    n_val = int(n_samples * val_ratio)
+
+    train_indices = indices[:n_train]
+    val_indices = indices[n_train:n_train + n_val]
+    test_indices = indices[n_train + n_val:]
+
+    # Create split datasets
+    train_sequences = [sequences[i] for i in train_indices]
+    train_labels = labels[train_indices]
+
+    val_sequences = [sequences[i] for i in val_indices]
+    val_labels = labels[val_indices]
+
+    test_sequences = [sequences[i] for i in test_indices]
+    test_labels = labels[test_indices]
+
+    # Create datasets
+    train_dataset = SequenceDataset(train_sequences, train_labels, max_packet_len, use_direction)
+    val_dataset = SequenceDataset(val_sequences, val_labels, max_packet_len, use_direction)
+    test_dataset = SequenceDataset(test_sequences, test_labels, max_packet_len, use_direction)
+
+    # Create loaders
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        collate_fn=collate_fn,
+        pin_memory=True,
+        drop_last=True
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        collate_fn=collate_fn,
+        pin_memory=True
+    )
+
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        collate_fn=collate_fn,
+        pin_memory=True
+    )
+
+    print(f"Dataset split (8:1:1):")
+    print(f"  Train: {len(train_dataset)} samples")
+    print(f"  Val:   {len(val_dataset)} samples")
+    print(f"  Test:  {len(test_dataset)} samples")
+
+    return train_loader, val_loader, test_loader

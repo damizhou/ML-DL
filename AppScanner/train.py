@@ -164,6 +164,13 @@ def mode_train(args, config):
     print(f"Features shape: {features.shape}")
     print(f"Number of classes: {config.num_classes}")
 
+    # Print class distribution
+    print("\nClass distribution:")
+    unique, counts = np.unique(labels, return_counts=True)
+    for label_id, count in zip(unique, counts):
+        class_name = label_map.get(label_id, f"Unknown({label_id})")
+        print(f"  {class_name}: {count} ({count/len(labels)*100:.1f}%)")
+
     # Create dataloaders with 8:1:1 split (train:val:test)
     train_loader, val_loader, test_loader, norm_params = create_dataloaders(
         features, labels,

@@ -13,7 +13,7 @@ import torch
 import numpy as np
 
 from models import create_fsnet, create_fsnet_nd
-from data import build_dataloader, get_dataset_info
+from data import load_pickle_dataset, create_dataloaders
 from engine import train_one_epoch, evaluate, save_checkpoint, load_checkpoint, EarlyStopping
 
 
@@ -21,8 +21,8 @@ from engine import train_one_epoch, evaluate, save_checkpoint, load_checkpoint, 
 # Configuration - Hardcoded Parameters
 # =============================================================================
 
-# Data
-DATA_PATH = "/home/pcz/DL/ML&DL/FS-Net/data/iscx_fsnet"
+# Data (pickle file from iscx_processor.py)
+DATA_PATH = "/home/pcz/DL/ML&DL/FS-Net/data/iscxvpn/iscxvpn_fsnet.pkl"
 NUM_CLASSES = 12          # ISCX: 12 classes
 
 # Model (Paper parameters: Section V-B-2)
@@ -40,6 +40,12 @@ BATCH_SIZE = 128
 LEARNING_RATE = 0.0005    # Learning rate (paper: 0.0005)
 PATIENCE = 20             # Early stopping patience
 NUM_WORKERS = 4           # Data loading workers
+SEED = 42                 # Random seed for reproducibility
+
+# Dataset split ratio (8:1:1)
+TRAIN_RATIO = 0.8
+VAL_RATIO = 0.1
+TEST_RATIO = 0.1
 
 # Output
 OUTPUT_DIR = "/home/pcz/DL/ML&DL/FS-Net/checkpoints"
@@ -49,33 +55,6 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Disable cuDNN for RNN (more stable)
 torch.backends.cudnn.enabled = False
-
-
-# =============================================================================
-# Helper Functions
-# =============================================================================
-
-def compute_class_weights(data_path: str, classes: list) -> torch.Tensor:
-    """Compute class weights for imbalanced dataset.
-
-    Uses inverse frequency weighting: weight = total / (num_classes * class_count)
-    """
-    # Load dataset info
-    info_path = Path(data_path) / 'dataset_info.json'
-    with open(info_path) as f:
-        info = json.load(f)
-
-    flow_counts = info['flow_counts']
-    total = sum(flow_counts.values())
-    num_classes = len(classes)
-
-    weights = []
-    for cls in classes:
-        count = flow_counts.get(cls, 1)
-        weight = total / (num_classes * count)
-        weights.append(weight)
-
-    return torch.tensor(weights, dtype=torch.float32)
 
 
 # =============================================================================
@@ -94,42 +73,47 @@ def main():
     device = torch.device(DEVICE)
     print(f"Using device: {device}")
 
-    # Get dataset info
-    info = get_dataset_info(DATA_PATH)
-    num_classes = NUM_CLASSES or info['num_classes']
-    print(f"Dataset: {info['num_classes']} classes, {info['total_samples']} samples")
-    print(f"Classes: {info['classes']}")
+    # Load dataset from pickle
+    print(f"\nLoading dataset from: {DATA_PATH}")
+    sequences, labels, label_map = load_pickle_dataset(DATA_PATH)
+    num_classes = NUM_CLASSES or len(label_map)
 
-    # Build data loaders
-    train_loader = build_dataloader(
-        DATA_PATH,
-        split='train',
-        batch_size=BATCH_SIZE,
-        num_workers=NUM_WORKERS,
-        shuffle=True
-    )
+    print(f"Total samples: {len(labels)}")
+    print(f"Num classes: {num_classes}")
 
-    val_split = 'val' if (Path(DATA_PATH) / 'val').exists() else 'test'
-    val_loader = build_dataloader(
-        DATA_PATH,
-        split=val_split,
-        batch_size=BATCH_SIZE,
-        num_workers=NUM_WORKERS,
-        shuffle=False
-    )
+    # Print class distribution
+    print("\nClass distribution:")
+    unique, counts = np.unique(labels, return_counts=True)
+    for label_id, count in zip(unique, counts):
+        class_name = label_map.get(label_id, f"Unknown({label_id})")
+        print(f"  [{label_id:2d}] {class_name:15s}: {count:6d} ({count/len(labels)*100:5.1f}%)")
 
-    test_loader = build_dataloader(
-        DATA_PATH,
-        split='test',
+    # Create dataloaders with 8:1:1 split
+    print(f"\nCreating dataloaders with {TRAIN_RATIO}:{VAL_RATIO}:{TEST_RATIO} split...")
+    train_loader, val_loader, test_loader = create_dataloaders(
+        sequences, labels,
         batch_size=BATCH_SIZE,
+        train_ratio=TRAIN_RATIO,
+        val_ratio=VAL_RATIO,
+        test_ratio=TEST_RATIO,
+        seed=SEED,
         num_workers=NUM_WORKERS,
-        shuffle=False
+        use_direction=True
     )
 
     # Compute class weights for imbalanced data
     class_weight = None
     if USE_CLASS_WEIGHT:
-        class_weight = compute_class_weights(DATA_PATH, info['classes'])
+        total = len(labels)
+        weights = []
+        for i in range(num_classes):
+            count = (labels == i).sum()
+            if count > 0:
+                weight = total / (num_classes * count)
+            else:
+                weight = 1.0
+            weights.append(weight)
+        class_weight = torch.tensor(weights, dtype=torch.float32)
         print(f"Class weights: {class_weight.tolist()}")
 
     # Create model
@@ -141,7 +125,7 @@ def main():
             num_layers=NUM_LAYERS,
             dropout=DROPOUT
         )
-        print("Using FS-Net-ND (no decoder)")
+        print("\nUsing FS-Net-ND (no decoder)")
     else:
         model = create_fsnet(
             num_classes=num_classes,
@@ -152,7 +136,7 @@ def main():
             alpha=ALPHA,
             class_weight=class_weight
         )
-        print("Using FS-Net")
+        print("\nUsing FS-Net")
 
     model = model.to(device)
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")

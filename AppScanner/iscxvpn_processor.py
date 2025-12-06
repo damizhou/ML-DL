@@ -96,7 +96,8 @@ def extract_direction_features(lengths: np.ndarray) -> np.ndarray:
     features.append(np.var(lengths))
 
     # 7-8. Shape statistics
-    if len(lengths) >= 3:
+    if len(lengths) >= 3 and np.std(lengths) > 1e-10:
+        # Only compute if there's enough variance to avoid precision issues
         features.append(scipy_stats.skew(lengths))
         features.append(scipy_stats.kurtosis(lengths))
     else:
@@ -153,14 +154,77 @@ def extract_flow_features(flow: FlowData) -> Optional[np.ndarray]:
 # PCAP Processing
 # =============================================================================
 
-def extract_flows_from_pcap(pcap_path: str) -> List[FlowData]:
+def extract_ip_from_buf(buf: bytes, datalink: int):
+    """
+    Extract IP packet from buffer based on datalink type.
+
+    Args:
+        buf: Raw packet bytes
+        datalink: PCAP datalink type
+
+    Returns:
+        IP packet object or None
+    """
+    try:
+        # DLT_EN10MB = 1 (Ethernet)
+        if datalink == 1:
+            eth = dpkt.ethernet.Ethernet(buf)
+            if isinstance(eth.data, dpkt.ip.IP):
+                return eth.data
+            elif isinstance(eth.data, dpkt.ip6.IP6):
+                return None  # Skip IPv6 for now
+
+        # DLT_RAW = 101 (Raw IP)
+        elif datalink == 101:
+            # First byte indicates IP version
+            if len(buf) > 0:
+                version = (buf[0] >> 4) & 0xF
+                if version == 4:
+                    return dpkt.ip.IP(buf)
+
+        # DLT_LINUX_SLL = 113 (Linux cooked capture)
+        elif datalink == 113:
+            if len(buf) >= 16:
+                # Linux SLL header is 16 bytes
+                # Protocol type is at bytes 14-15
+                proto = (buf[14] << 8) | buf[15]
+                if proto == 0x0800:  # IPv4
+                    return dpkt.ip.IP(buf[16:])
+
+        # DLT_LINUX_SLL2 = 276 (Linux cooked capture v2)
+        elif datalink == 276:
+            if len(buf) >= 20:
+                # SLL2 header is 20 bytes, protocol at bytes 0-1
+                proto = (buf[0] << 8) | buf[1]
+                if proto == 0x0800:  # IPv4
+                    return dpkt.ip.IP(buf[20:])
+
+        # DLT_NULL = 0 (BSD loopback)
+        elif datalink == 0:
+            if len(buf) >= 4:
+                # 4-byte header, check for AF_INET
+                family = buf[0] if buf[0] != 0 else buf[3]
+                if family == 2:  # AF_INET
+                    return dpkt.ip.IP(buf[4:])
+
+    except Exception:
+        pass
+
+    return None
+
+
+def extract_flows_from_pcap(pcap_path: str, return_stats: bool = False):
     """
     Extract flows from PCAP using dpkt.
 
     Returns list of FlowData objects with packet lengths and directions.
+    If return_stats=True, also returns statistics dict.
     """
     if not DPKT_AVAILABLE:
         raise ImportError("dpkt is required")
+
+    stats = {'total_packets': 0, 'ip_packets': 0, 'tcp_udp_packets': 0,
+             'flows_before_filter': 0, 'flows_after_filter': 0, 'datalink': 0}
 
     # Group packets by flow: flow_key -> [(time, length, src_ip), ...]
     flows = defaultdict(list)
@@ -173,16 +237,19 @@ def extract_flows_from_pcap(pcap_path: str) -> List[FlowData]:
                 f.seek(0)
                 pcap = dpkt.pcapng.Reader(f)
 
+            # Get datalink type
+            datalink = pcap.datalink()
+            stats['datalink'] = datalink
+
             for ts, buf in pcap:
-                try:
-                    eth = dpkt.ethernet.Ethernet(buf)
-                except Exception:
+                stats['total_packets'] += 1
+
+                # Extract IP packet based on datalink type
+                ip = extract_ip_from_buf(buf, datalink)
+                if ip is None:
                     continue
 
-                if not isinstance(eth.data, dpkt.ip.IP):
-                    continue
-
-                ip = eth.data
+                stats['ip_packets'] += 1
                 src_ip = socket.inet_ntoa(ip.src)
                 dst_ip = socket.inet_ntoa(ip.dst)
 
@@ -195,6 +262,8 @@ def extract_flows_from_pcap(pcap_path: str) -> List[FlowData]:
                 else:
                     continue
 
+                stats['tcp_udp_packets'] += 1
+
                 # Normalize flow key
                 if (src_ip, sport) < (dst_ip, dport):
                     flow_key = (src_ip, dst_ip, sport, dport, proto)
@@ -205,7 +274,11 @@ def extract_flows_from_pcap(pcap_path: str) -> List[FlowData]:
 
     except Exception as e:
         print(f"Error reading {pcap_path}: {e}")
+        if return_stats:
+            return [], stats
         return []
+
+    stats['flows_before_filter'] = len(flows)
 
     # Convert to FlowData objects
     result = []
@@ -242,26 +315,35 @@ def extract_flows_from_pcap(pcap_path: str) -> List[FlowData]:
         if len(lengths) >= MIN_PACKETS:
             result.append(FlowData(lengths=lengths, directions=directions))
 
+    stats['flows_after_filter'] = len(result)
     del flows
+
+    if return_stats:
+        return result, stats
     return result
 
 
-def process_single_pcap(args: Tuple[str, int]) -> Tuple[int, List[np.ndarray]]:
+def process_single_pcap(args: Tuple[str, int], debug: bool = False) -> Tuple[int, List[np.ndarray], Dict]:
     """
     Worker: process one PCAP file.
 
     Args:
         args: (pcap_path, label)
+        debug: if True, return debug info
 
     Returns:
-        (label, list of 54-dim feature vectors)
+        (label, list of 54-dim feature vectors, debug_info)
     """
     pcap_path, label = args
+    debug_info = {'path': pcap_path, 'exists': False, 'total_packets': 0,
+                  'ip_packets': 0, 'flows_before_filter': 0, 'flows_after_filter': 0}
 
     if not os.path.exists(pcap_path):
-        return (label, [])
+        return (label, [], debug_info)
 
-    flows = extract_flows_from_pcap(pcap_path)
+    debug_info['exists'] = True
+    flows, stats = extract_flows_from_pcap(pcap_path, return_stats=True)
+    debug_info.update(stats)
 
     features_list = []
     for flow in flows:
@@ -269,7 +351,9 @@ def process_single_pcap(args: Tuple[str, int]) -> Tuple[int, List[np.ndarray]]:
         if features is not None:
             features_list.append(features)
 
-    return (label, features_list)
+    debug_info['flows_after_filter'] = len(features_list)
+
+    return (label, features_list, debug_info)
 
 
 # =============================================================================
@@ -311,26 +395,63 @@ def process_iscxvpn_dataset():
     # Prepare tasks
     tasks = [(pcap_path, label) for pcap_path, label in label_map]
 
+    # Count files per class
+    files_per_class = defaultdict(int)
+    for _, label in label_map:
+        files_per_class[label] += 1
+    print("\nPCAP files per class:")
+    for label_id in sorted(vocab.keys()):
+        print(f"  [{label_id:2d}] {vocab[label_id]:15s}: {files_per_class.get(label_id, 0)} files")
+
     # Collect all features and labels
     all_features = []
     all_labels = []
     class_counts = defaultdict(int)
+    failed_files = defaultdict(list)  # Track failed files per class
+    debug_infos = []  # Collect debug info for failed files
 
     # Process with multi-processing
     with ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
         futures = {executor.submit(process_single_pcap, task): task for task in tasks}
 
         for future in tqdm(as_completed(futures), total=len(futures), desc="Processing"):
+            task = futures[future]
+            pcap_path, label = task
             try:
-                label, features_list = future.result()
+                result_label, features_list, debug_info = future.result()
+
+                if len(features_list) == 0:
+                    failed_files[label].append(pcap_path)
+                    debug_infos.append((label, debug_info))
 
                 for features in features_list:
                     all_features.append(features)
-                    all_labels.append(label)
-                    class_counts[label] += 1
+                    all_labels.append(result_label)
+                    class_counts[result_label] += 1
 
             except Exception as e:
-                print(f"Error: {e}")
+                failed_files[label].append(f"{pcap_path} (Error: {e})")
+
+    # Print failed files summary with debug info
+    print("\nFiles with 0 flows extracted:")
+    for label_id in sorted(failed_files.keys()):
+        if failed_files[label_id]:
+            print(f"  [{label_id}] {vocab.get(label_id, 'Unknown')}: {len(failed_files[label_id])} files failed")
+
+    # Print detailed debug info for VPN classes (6-11)
+    vpn_debug = [d for l, d in debug_infos if l >= 6]
+    if vpn_debug:
+        print("\nVPN files debug info (first 5):")
+        datalink_names = {0: 'NULL', 1: 'Ethernet', 101: 'Raw IP', 113: 'Linux SLL', 276: 'Linux SLL2'}
+        for info in vpn_debug[:5]:
+            fname = os.path.basename(info['path'])
+            dl = info.get('datalink', 0)
+            dl_name = datalink_names.get(dl, f'Unknown({dl})')
+            print(f"  {fname}: [datalink={dl_name}]")
+            print(f"    total_packets={info['total_packets']}, ip_packets={info['ip_packets']}, "
+                  f"tcp_udp={info['tcp_udp_packets']}")
+            print(f"    flows_before_filter={info['flows_before_filter']}, "
+                  f"flows_after_filter={info['flows_after_filter']} (min_packets={MIN_PACKETS})")
 
     # Convert to numpy arrays
     features = np.array(all_features, dtype=np.float32)
@@ -371,8 +492,11 @@ def process_iscxvpn_dataset():
     print(f"Total samples: {len(labels)}")
     print(f"Num classes: {len(vocab)}")
     print("\nFlows per class:")
-    for label_id in sorted(class_counts.keys()):
-        print(f"  {vocab[label_id]}: {class_counts[label_id]}")
+    total_flows = len(labels)
+    for label_id in sorted(vocab.keys()):
+        count = class_counts.get(label_id, 0)
+        pct = count / total_flows * 100 if total_flows > 0 else 0
+        print(f"  [{label_id:2d}] {vocab[label_id]:15s}: {count:6d} ({pct:5.1f}%)")
 
     print(f"\nDataset saved to:")
     print(f"  {pickle_path}")

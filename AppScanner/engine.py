@@ -338,10 +338,10 @@ def train(
               f"LR: {train_metrics.learning_rate:.6f} | "
               f"Time: {elapsed:.1f}s")
 
-        # Early stopping
-        if early_stopping(val_metrics.accuracy):
-            print(f"Early stopping at epoch {epoch+1}")
-            break
+        # Early stopping disabled - run all epochs
+        # if early_stopping(val_metrics.accuracy):
+        #     print(f"Early stopping at epoch {epoch+1}")
+        #     break
 
     # Load best model
     checkpoint = torch.load(best_model_path, map_location=device, weights_only=False)
