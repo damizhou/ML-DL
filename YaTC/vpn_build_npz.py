@@ -49,10 +49,10 @@ ROOT = Path("/netdisk/dataset/vpn/data")  # 输入：一级子目录名为标签
 OUT_ROOT = Path(__file__).resolve().parent / "vpn_yatc_data"  # 输出目录
 MAX_PROCS = 16  # 并发进程数
 
-# MFR 参数
+# MFR 参数 (5包 × 320字节 = 1600字节 = 40×40)
 NUM_PACKETS = 5  # 每个流使用的数据包数
-HEADER_LEN = 160  # 头部字节数 (实际使用的字节)
-PAYLOAD_LEN = 480  # 载荷字节数
+HEADER_LEN = 40   # IP + TCP/UDP 头部
+PAYLOAD_LEN = 280  # 载荷
 BYTES_PER_PACKET = HEADER_LEN + PAYLOAD_LEN  # 320 字节
 TOTAL_BYTES = NUM_PACKETS * BYTES_PER_PACKET  # 1600 字节
 IMAGE_SIZE = 40  # 40×40 图像

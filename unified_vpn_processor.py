@@ -58,7 +58,7 @@ class Config:
     """统一配置"""
     # 输入输出
     root: Path = Path("/netdisk/dataset/vpn/data")
-    output: Path = Path("./vpn_unified_output")
+    output: Path = Path(".")  # 项目根目录，数据将放到各模型的 vpn_data/ 子目录
 
     # 并行处理
     max_procs: int = 16
@@ -81,10 +81,10 @@ class Config:
     appscanner_max_pkts: int = 260
     appscanner_percentiles: List[int] = field(default_factory=lambda: [10, 20, 30, 40, 50, 60, 70, 80, 90])
 
-    # YaTC 参数
+    # YaTC 参数 (5包 × 320字节 = 1600字节 = 40×40)
     yatc_num_packets: int = 5
-    yatc_header_len: int = 160
-    yatc_payload_len: int = 480
+    yatc_header_len: int = 40      # IP + TCP/UDP 头部
+    yatc_payload_len: int = 280    # 载荷
     yatc_image_size: int = 40
 
 
@@ -512,7 +512,7 @@ def main():
                         help="输出目录")
     parser.add_argument("--procs", type=int, default=16,
                         help="并行进程数")
-    parser.add_argument("--max_labels", type=int, default=0,
+    parser.add_argument("--max_labels", type=int, default=10,
                         help="最大处理标签数（0=不限制）")
     args = parser.parse_args()
 
@@ -563,61 +563,93 @@ def main():
 
     print(f"\n总计 {total_pcaps} 个 PCAP 文件待处理")
 
-    # 创建输出目录
-    config.output.mkdir(parents=True, exist_ok=True)
+    # 各模型的输出目录
+    OUTPUT_DIRS = {
+        "fsnet": config.output / "FS-Net" / "vpn_data",
+        "deepfingerprinting": config.output / "DeepFingerprinting" / "vpn_data",
+        "appscanner": config.output / "AppScanner" / "vpn_data",
+        "yatc": config.output / "YaTC" / "vpn_data",
+    }
 
-    # 准备任务
-    all_tasks = []
-    for label, pcaps in label_to_pcaps.items():
-        for pcap_path in pcaps:
-            all_tasks.append((pcap_path, label, config))
+    # 创建各模型输出目录
+    for out_dir in OUTPUT_DIRS.values():
+        out_dir.mkdir(parents=True, exist_ok=True)
 
-    # 多进程处理
-    print("\n开始处理（一次读取，四种特征）...")
+    # 统计
+    fsnet_count = 0
+    df_count = 0
+    appscanner_count = 0
+    yatc_count = 0
 
-    # 按 label 聚合结果
-    fsnet_data: Dict[str, List[np.ndarray]] = defaultdict(list)
-    df_data: Dict[str, List[np.ndarray]] = defaultdict(list)
-    appscanner_data: Dict[str, List[np.ndarray]] = defaultdict(list)
-    yatc_data: Dict[str, List[np.ndarray]] = defaultdict(list)
-
-    with mp.Pool(processes=config.max_procs) as pool:
-        results = list(tqdm(
-            pool.imap_unordered(process_single_pcap, all_tasks),
-            total=len(all_tasks),
-            desc="处理 PCAP"
-        ))
-
-    # 聚合结果
-    for pcap_path, label, features in results:
-        if features.fsnet:
-            fsnet_data[label].extend(features.fsnet)
-        if features.df:
-            df_data[label].extend(features.df)
-        if features.appscanner:
-            appscanner_data[label].extend(features.appscanner)
-        if features.yatc:
-            yatc_data[label].extend(features.yatc)
-
-    # 保存各模型数据
-    print("\n" + "=" * 70)
-    print("保存数据")
+    print("\n开始处理（按 label 分批，节省内存）...")
     print("=" * 70)
 
-    fsnet_count = save_model_data(
-        "fsnet", config.output, fsnet_data, labels, label2id, id2label,
-        data_key="sequences"
-    )
+    # 按 label 逐个处理，处理完立即保存并释放内存
+    for label in tqdm(labels, desc="处理 Label"):
+        pcaps = label_to_pcaps[label]
+        label_id = label2id[label]
 
-    df_count = save_model_data(
-        "deepfingerprinting", config.output, df_data, labels, label2id, id2label,
-        data_key="flows"
-    )
+        # 准备该 label 的任务
+        tasks = [(pcap_path, label, config) for pcap_path in pcaps]
 
-    appscanner_count = save_model_data(
-        "appscanner", config.output, appscanner_data, labels, label2id, id2label,
-        data_key="features",
-        extra_meta={
+        # 该 label 的特征
+        fsnet_data: List[np.ndarray] = []
+        df_data: List[np.ndarray] = []
+        appscanner_data: List[np.ndarray] = []
+        yatc_data: List[np.ndarray] = []
+
+        # 多进程处理该 label 的所有 PCAP
+        with mp.Pool(processes=config.max_procs) as pool:
+            results = list(pool.imap_unordered(process_single_pcap, tasks))
+
+        # 聚合该 label 的结果
+        for pcap_path, _, features in results:
+            if features.fsnet:
+                fsnet_data.extend(features.fsnet)
+            if features.df:
+                df_data.extend(features.df)
+            if features.appscanner:
+                appscanner_data.extend(features.appscanner)
+            if features.yatc:
+                yatc_data.extend(features.yatc)
+
+        # 立即保存该 label 的数据
+        # FS-Net
+        if fsnet_data:
+            out_path = OUTPUT_DIRS["fsnet"] / f"{label}.npz"
+            np.savez_compressed(out_path, sequences=np.array(fsnet_data, dtype=object), label=label, label_id=label_id)
+            fsnet_count += len(fsnet_data)
+
+        # DeepFingerprinting
+        if df_data:
+            out_path = OUTPUT_DIRS["deepfingerprinting"] / f"{label}.npz"
+            np.savez_compressed(out_path, flows=np.array(df_data, dtype=object), label=label, label_id=label_id)
+            df_count += len(df_data)
+
+        # AppScanner
+        if appscanner_data:
+            out_path = OUTPUT_DIRS["appscanner"] / f"{label}.npz"
+            np.savez_compressed(out_path, features=np.stack(appscanner_data, axis=0), label=label, label_id=label_id)
+            appscanner_count += len(appscanner_data)
+
+        # YaTC
+        if yatc_data:
+            out_path = OUTPUT_DIRS["yatc"] / f"{label}.npz"
+            np.savez_compressed(out_path, images=np.stack(yatc_data, axis=0), label=label, label_id=label_id)
+            yatc_count += len(yatc_data)
+
+        # 打印该 label 的统计
+        tqdm.write(f"  {label}: FS-Net={len(fsnet_data)}, DF={len(df_data)}, AppScanner={len(appscanner_data)}, YaTC={len(yatc_data)}")
+
+        # 释放内存
+        del fsnet_data, df_data, appscanner_data, yatc_data, results
+
+    # 保存标签映射
+    print("\n保存标签映射...")
+    extra_metas = {
+        "fsnet": None,
+        "deepfingerprinting": None,
+        "appscanner": {
             "feature_names": [
                 "in_count", "in_min", "in_max", "in_mean", "in_std", "in_var",
                 "in_skew", "in_kurt", "in_mad",
@@ -629,13 +661,8 @@ def main():
                 "bi_skew", "bi_kurt", "bi_mad",
                 "bi_p10", "bi_p20", "bi_p30", "bi_p40", "bi_p50", "bi_p60", "bi_p70", "bi_p80", "bi_p90",
             ]
-        }
-    )
-
-    yatc_count = save_model_data(
-        "yatc", config.output, yatc_data, labels, label2id, id2label,
-        data_key="images",
-        extra_meta={
+        },
+        "yatc": {
             "mfr_config": {
                 "num_packets": config.yatc_num_packets,
                 "header_len": config.yatc_header_len,
@@ -643,7 +670,17 @@ def main():
                 "image_size": config.yatc_image_size
             }
         }
-    )
+    }
+    for model_name, out_dir in OUTPUT_DIRS.items():
+        labels_json = {
+            "label2id": label2id,
+            "id2label": {str(k): v for k, v in id2label.items()}
+        }
+        extra_meta = extra_metas.get(model_name)
+        if extra_meta:
+            labels_json.update(extra_meta)
+        with open(out_dir / "labels.json", "w", encoding="utf-8") as f:
+            json.dump(labels_json, f, ensure_ascii=False, indent=2)
 
     # 总结
     print("\n" + "=" * 70)
@@ -657,14 +694,14 @@ def main():
     print(f"  YaTC:               {yatc_count:>8} 个图像")
     print(f"\n目录结构:")
     print(f"  {config.output}/")
-    print(f"  ├── fsnet/")
+    print(f"  ├── FS-Net/vpn_data/")
     print(f"  │   ├── <label>.npz")
     print(f"  │   └── labels.json")
-    print(f"  ├── deepfingerprinting/")
+    print(f"  ├── DeepFingerprinting/vpn_data/")
     print(f"  │   └── ...")
-    print(f"  ├── appscanner/")
+    print(f"  ├── AppScanner/vpn_data/")
     print(f"  │   └── ...")
-    print(f"  └── yatc/")
+    print(f"  └── YaTC/vpn_data/")
     print(f"      └── ...")
 
 
