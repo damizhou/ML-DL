@@ -15,6 +15,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
+from sklearn.metrics import precision_score, recall_score, f1_score, classification_report
 
 from Model_NoDef_pytorch import DFNoDefNet
 
@@ -132,7 +133,7 @@ def train_epoch(model, loader, optimizer, criterion, device, scaler):
 
         optimizer.zero_grad()
 
-        with torch.cuda.amp.autocast():
+        with torch.amp.autocast('cuda'):
             logits = model(x)
             loss = criterion(logits, y)
 
@@ -159,7 +160,7 @@ def evaluate(model, loader, device):
         for x, y in loader:
             x, y = x.to(device), y.to(device)
 
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
                 logits = model(x)
 
             preds = logits.argmax(dim=1)
@@ -218,7 +219,7 @@ def main():
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     criterion = nn.CrossEntropyLoss()
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler('cuda')
 
     print(f"\nModel: DFNoDefNet")
     print(f"Training for {EPOCHS} epochs...")
@@ -241,9 +242,26 @@ def main():
     print("\n" + "=" * 60)
     print("Test Results")
     print("=" * 60)
-    model.load_state_dict(torch.load(best_model_path))
-    test_acc, preds, labels = evaluate(model, test_loader, device)
-    print(f"Test Accuracy: {test_acc:.4f}")
+    model.load_state_dict(torch.load(best_model_path, weights_only=True))
+    test_acc, preds, labels_arr = evaluate(model, test_loader, device)
+
+    # 计算各项指标
+    precision = precision_score(labels_arr, preds, average='macro', zero_division=0)
+    recall = recall_score(labels_arr, preds, average='macro', zero_division=0)
+    f1 = f1_score(labels_arr, preds, average='macro', zero_division=0)
+
+    print(f"Test Accuracy:  {test_acc:.4f}")
+    print(f"Test Precision: {precision:.4f}")
+    print(f"Test Recall:    {recall:.4f}")
+    print(f"Test F1 Score:  {f1:.4f}")
+
+    # 打印分类报告
+    print("\n" + "-" * 60)
+    print("Classification Report:")
+    print("-" * 60)
+    labels_list = list(range(num_classes))
+    target_names = [id2label[i] for i in labels_list]
+    print(classification_report(labels_arr, preds, labels=labels_list, target_names=target_names, zero_division=0))
 
 
 if __name__ == "__main__":

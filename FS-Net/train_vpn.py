@@ -35,7 +35,7 @@ DROPOUT = 0.3
 ALPHA = 1.0  # 重建损失权重
 
 # 训练参数
-EPOCHS = 100
+EPOCHS = 10
 BATCH_SIZE = 512
 LEARNING_RATE = 0.0005
 TRAIN_RATIO = 0.8
@@ -285,8 +285,9 @@ def main():
     print("\n" + "-" * 60)
     print("Classification Report:")
     print("-" * 60)
-    target_names = [id2label[i] for i in range(num_classes)]
-    print(classification_report(labels_arr, preds, target_names=target_names, zero_division=0))
+    labels_list = list(range(num_classes))
+    target_names = [id2label[i] for i in labels_list]
+    print(classification_report(labels_arr, preds, labels=labels_list, target_names=target_names, zero_division=0))
 
 
 if __name__ == "__main__":

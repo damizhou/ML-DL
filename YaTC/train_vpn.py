@@ -26,7 +26,9 @@ from pathlib import Path
 REFACTOR_DIR = Path(__file__).parent / "refactor"
 sys.path.insert(0, str(REFACTOR_DIR))
 
+import numpy as np
 import torch
+from sklearn.metrics import classification_report
 
 from models import mae_yatc, traformer_yatc
 from data import build_npz_pretrain_dataloader, build_npz_finetune_dataloader
@@ -282,7 +284,7 @@ def finetune(args):
     print("=" * 60)
 
     # 加载最佳模型
-    checkpoint = torch.load(best_model_path, map_location='cpu')
+    checkpoint = torch.load(best_model_path, map_location='cpu', weights_only=True)
     if 'model' in checkpoint:
         model.load_state_dict(checkpoint['model'])
     else:
@@ -299,6 +301,27 @@ def finetune(args):
     print(f"Test Precision: {test_metrics['precision']:.4f}")
     print(f"Test Recall:    {test_metrics['recall']:.4f}")
     print(f"Test F1 Score:  {test_metrics['f1']:.4f}")
+
+    # 获取预测结果用于分类报告
+    model.eval()
+    all_preds = []
+    all_labels = []
+    with torch.no_grad():
+        for samples, targets in test_loader:
+            samples = samples.to(device)
+            outputs = model(samples)
+            _, preds = outputs.max(dim=1)
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(targets.numpy())
+
+    # 打印分类报告
+    print("\n" + "-" * 60)
+    print("Classification Report:")
+    print("-" * 60)
+    id2label = test_loader.dataset.id2label
+    labels_list = list(range(num_classes))
+    target_names = [id2label[i] for i in labels_list]
+    print(classification_report(all_labels, all_preds, labels=labels_list, target_names=target_names, zero_division=0))
 
 
 # =============================================================================
