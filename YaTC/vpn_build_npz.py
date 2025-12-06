@@ -340,8 +340,7 @@ def main():
 
     # 保存每个 label 的 NPZ
     print("\n保存 NPZ 文件:")
-    all_images = []
-    all_labels = []
+    total_images = 0
 
     for label in labels:
         images = label_images.get(label, [])
@@ -360,22 +359,9 @@ def main():
             label_id=label_id
         )
         print(f"  [保存] {label}: {len(images)} 个 MFR 图像 (shape: {images_arr.shape}) -> {out_path.name}")
+        total_images += len(images)
 
-        all_images.extend(images)
-        all_labels.extend([label_id] * len(images))
-
-    # 保存合并的数据集
-    if all_images:
-        merged_path = OUT_ROOT / "merged_dataset.npz"
-        images_arr = np.stack(all_images, axis=0)
-        labels_arr = np.array(all_labels, dtype=np.int64)
-
-        np.savez_compressed(
-            merged_path,
-            images=images_arr,
-            labels=labels_arr
-        )
-        print(f"\n[合并] 总计 {len(all_images)} 个 MFR 图像 (shape: {images_arr.shape}) -> {merged_path.name}")
+    print(f"\n[总计] {total_images} 个 MFR 图像")
 
     # 保存标签映射
     labels_json_path = OUT_ROOT / "labels.json"
@@ -398,7 +384,7 @@ def main():
     print("\n" + "=" * 60)
     print("统计信息:")
     print(f"  类别数: {len(labels)}")
-    print(f"  总图像数: {len(all_images)}")
+    print(f"  总图像数: {total_images}")
     print(f"  图像尺寸: {IMAGE_SIZE}×{IMAGE_SIZE}")
     for label in labels:
         count = len(label_images.get(label, []))

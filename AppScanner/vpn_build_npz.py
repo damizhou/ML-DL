@@ -349,8 +349,7 @@ def main():
 
     # 保存每个 label 的 NPZ
     print("\n保存 NPZ 文件:")
-    all_features = []
-    all_labels = []
+    total_flows = 0
 
     for label in labels:
         features = label_features.get(label, [])
@@ -369,22 +368,9 @@ def main():
             label_id=label_id
         )
         print(f"  [保存] {label}: {len(features)} 条流 (shape: {features_arr.shape}) -> {out_path.name}")
+        total_flows += len(features)
 
-        all_features.extend(features)
-        all_labels.extend([label_id] * len(features))
-
-    # 保存合并的数据集
-    if all_features:
-        merged_path = OUT_ROOT / "merged_dataset.npz"
-        features_arr = np.stack(all_features, axis=0)
-        labels_arr = np.array(all_labels, dtype=np.int64)
-
-        np.savez_compressed(
-            merged_path,
-            features=features_arr,
-            labels=labels_arr
-        )
-        print(f"\n[合并] 总计 {len(all_features)} 条流 (shape: {features_arr.shape}) -> {merged_path.name}")
+    print(f"\n[总计] {total_flows} 条流")
 
     # 保存标签映射
     labels_json_path = OUT_ROOT / "labels.json"
@@ -413,7 +399,7 @@ def main():
     print("\n" + "=" * 60)
     print("统计信息:")
     print(f"  类别数: {len(labels)}")
-    print(f"  总流数: {len(all_features)}")
+    print(f"  总流数: {total_flows}")
     print(f"  特征维度: 54")
     for label in labels:
         count = len(label_features.get(label, []))

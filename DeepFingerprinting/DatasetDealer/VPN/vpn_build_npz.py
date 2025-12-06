@@ -255,8 +255,7 @@ def main():
 
     # 保存每个 label 的 NPZ
     print("\n保存 NPZ 文件:")
-    all_flows = []
-    all_labels = []
+    total_flows = 0
 
     for label in labels:
         flows = label_flows.get(label, [])
@@ -276,20 +275,9 @@ def main():
             label_id=label_id
         )
         print(f"  [保存] {label}: {len(flows)} 条流 -> {out_path.name}")
+        total_flows += len(flows)
 
-        # 收集用于合并
-        all_flows.extend(flows)
-        all_labels.extend([label_id] * len(flows))
-
-    # 保存合并的数据集
-    merged_path = OUT_ROOT / "merged_dataset.npz"
-    np.savez_compressed(
-        merged_path,
-        flows=np.array(all_flows, dtype=object),
-        labels=np.array(all_labels, dtype=np.int64),
-        allow_pickle=True
-    )
-    print(f"\n[合并] 总计 {len(all_flows)} 条流 -> {merged_path.name}")
+    print(f"\n[总计] {total_flows} 条流")
 
     # 保存标签映射
     labels_json_path = OUT_ROOT / "labels.json"
@@ -304,19 +292,10 @@ def main():
     print("\n" + "=" * 60)
     print("统计信息:")
     print(f"  类别数: {len(labels)}")
-    print(f"  总流数: {len(all_flows)}")
+    print(f"  总流数: {total_flows}")
     for label in labels:
         count = len(label_flows.get(label, []))
         print(f"  - {label}: {count} 条流")
-
-    # 打印序列长度分布
-    if all_flows:
-        lengths = [len(f) for f in all_flows]
-        print(f"\n序列长度统计:")
-        print(f"  最小: {min(lengths)}")
-        print(f"  最大: {max(lengths)}")
-        print(f"  平均: {np.mean(lengths):.1f}")
-        print(f"  中位数: {np.median(lengths):.1f}")
 
 
 if __name__ == "__main__":
