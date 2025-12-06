@@ -24,7 +24,7 @@ from models import create_fsnet
 # =============================================================================
 
 # 数据路径 (当前模型目录下的 vpn_data)
-DATA_DIR = Path(__file__).parent / "vpn_data"
+DATA_DIR = Path(__file__).parent / "vpn_unified_output"
 
 # 模型参数
 EMBED_DIM = 128
@@ -69,9 +69,10 @@ class FSNetDataset(Dataset):
 
 
 def collate_fn(batch):
-    """变长序列 padding"""
+    """变长序列 padding，返回 (x, lengths, labels)"""
     sequences, labels = zip(*batch)
-    max_len = max(len(s) for s in sequences)
+    lengths = np.array([len(s) for s in sequences], dtype=np.int64)
+    max_len = max(lengths)
 
     padded = np.zeros((len(sequences), max_len), dtype=np.int64)
     for i, seq in enumerate(sequences):
@@ -79,7 +80,7 @@ def collate_fn(batch):
         indices = np.where(seq < 0, -seq, seq + 1501)
         padded[i, :len(seq)] = indices
 
-    return torch.LongTensor(padded), torch.LongTensor(labels)
+    return torch.LongTensor(padded), torch.LongTensor(lengths), torch.LongTensor(labels)
 
 
 def load_npz_data(data_dir: Path):
@@ -130,26 +131,42 @@ def split_data(sequences, labels, train_ratio, val_ratio, seed):
 # 训练
 # =============================================================================
 
+def compute_recon_loss(recon_logits, x, lengths):
+    """计算重建损失"""
+    batch_size, seq_len, vocab_size = recon_logits.size()
+    # 创建 mask，只计算非 padding 位置
+    mask = torch.arange(seq_len, device=lengths.device).unsqueeze(0) < lengths.unsqueeze(1)
+
+    recon_logits_flat = recon_logits.view(-1, vocab_size)
+    x_flat = x.view(-1)
+    mask_flat = mask.view(-1)
+
+    recon_loss = nn.functional.cross_entropy(recon_logits_flat, x_flat, reduction='none')
+    recon_loss = (recon_loss * mask_flat.float()).sum() / mask_flat.float().sum()
+    return recon_loss
+
+
 def train_epoch(model, loader, optimizer, device, alpha):
     model.train()
     total_loss = 0
     correct = 0
     total = 0
 
-    for x, y in loader:
-        x, y = x.to(device), y.to(device)
+    for x, lengths, y in loader:
+        x, lengths, y = x.to(device), lengths.to(device), y.to(device)
 
         optimizer.zero_grad()
-        logits, recon_loss = model(x)
+        class_logits, recon_logits = model(x, lengths)
 
-        cls_loss = nn.functional.cross_entropy(logits, y)
+        cls_loss = nn.functional.cross_entropy(class_logits, y)
+        recon_loss = compute_recon_loss(recon_logits, x, lengths)
         loss = cls_loss + alpha * recon_loss
 
         loss.backward()
         optimizer.step()
 
         total_loss += loss.item() * x.size(0)
-        preds = logits.argmax(dim=1)
+        preds = class_logits.argmax(dim=1)
         correct += (preds == y).sum().item()
         total += x.size(0)
 
@@ -164,10 +181,10 @@ def evaluate(model, loader, device):
     all_labels = []
 
     with torch.no_grad():
-        for x, y in loader:
-            x, y = x.to(device), y.to(device)
-            logits, _ = model(x)
-            preds = logits.argmax(dim=1)
+        for x, lengths, y in loader:
+            x, lengths, y = x.to(device), lengths.to(device), y.to(device)
+            class_logits, _ = model(x, lengths)
+            preds = class_logits.argmax(dim=1)
 
             correct += (preds == y).sum().item()
             total += x.size(0)

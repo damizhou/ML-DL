@@ -24,7 +24,7 @@ from Model_NoDef_pytorch import DFNoDefNet
 # =============================================================================
 
 # 数据路径 (当前模型目录下的 vpn_data)
-DATA_DIR = Path(__file__).parent / "vpn_data"
+DATA_DIR = Path(__file__).parent / "vpn_unified_output"
 
 # 模型参数
 MAX_LEN = 5000  # 固定输入长度

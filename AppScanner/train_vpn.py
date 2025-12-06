@@ -24,7 +24,7 @@ from models import AppScannerNN
 # =============================================================================
 
 # 数据路径 (当前模型目录下的 vpn_data)
-DATA_DIR = Path(__file__).parent / "vpn_data"
+DATA_DIR = Path(__file__).parent / "vpn_unified_output"
 
 # 模型参数
 INPUT_DIM = 54  # 54 维统计特征

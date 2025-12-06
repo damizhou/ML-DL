@@ -563,12 +563,15 @@ def main():
 
     print(f"\n总计 {total_pcaps} 个 PCAP 文件待处理")
 
-    # 各模型的输出目录
+    # 各模型的输出目录（输出到各模型项目目录下）
+    # 格式: <project_root>/<ModelName>/<output_subdir>/
+    project_root = config.output.parent if config.output.name != "." else config.output
+    output_subdir = config.output.name if config.output.name != "." else "vpn_unified_output"
     OUTPUT_DIRS = {
-        "fsnet": config.output / "FS-Net" / "vpn_data",
-        "deepfingerprinting": config.output / "DeepFingerprinting" / "vpn_data",
-        "appscanner": config.output / "AppScanner" / "vpn_data",
-        "yatc": config.output / "YaTC" / "vpn_data",
+        "fsnet": project_root / "FS-Net" / output_subdir,
+        "deepfingerprinting": project_root / "DeepFingerprinting" / output_subdir,
+        "appscanner": project_root / "AppScanner" / output_subdir,
+        "yatc": project_root / "YaTC" / output_subdir,
     }
 
     # 创建各模型输出目录
@@ -686,22 +689,22 @@ def main():
     print("\n" + "=" * 70)
     print("处理完成!")
     print("=" * 70)
-    print(f"输出目录: {config.output}")
+    print(f"输出目录: {project_root}/<ModelName>/{output_subdir}/")
     print(f"\n各模型数据统计:")
     print(f"  FS-Net:            {fsnet_count:>8} 条流")
     print(f"  DeepFingerprinting: {df_count:>8} 条流")
     print(f"  AppScanner:         {appscanner_count:>8} 条流")
     print(f"  YaTC:               {yatc_count:>8} 个图像")
     print(f"\n目录结构:")
-    print(f"  {config.output}/")
-    print(f"  ├── FS-Net/vpn_data/")
+    print(f"  {project_root}/")
+    print(f"  ├── FS-Net/{output_subdir}/")
     print(f"  │   ├── <label>.npz")
     print(f"  │   └── labels.json")
-    print(f"  ├── DeepFingerprinting/vpn_data/")
+    print(f"  ├── DeepFingerprinting/{output_subdir}/")
     print(f"  │   └── ...")
-    print(f"  ├── AppScanner/vpn_data/")
+    print(f"  ├── AppScanner/{output_subdir}/")
     print(f"  │   └── ...")
-    print(f"  └── YaTC/vpn_data/")
+    print(f"  └── YaTC/{output_subdir}/")
     print(f"      └── ...")
 
 

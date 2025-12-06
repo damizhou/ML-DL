@@ -45,7 +45,7 @@ from engine import (
 # =============================================================================
 
 # 数据路径 (当前模型目录下的 vpn_data)
-DATA_DIR = Path(__file__).parent / "vpn_data"
+DATA_DIR = Path(__file__).parent / "vpn_unified_output"
 
 # 输出目录
 OUTPUT_DIR = Path(__file__).parent / "checkpoints"
