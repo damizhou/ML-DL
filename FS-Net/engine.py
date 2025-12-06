@@ -247,7 +247,11 @@ def evaluate(
         'recall': macro_recall,
         'f1': macro_f1,
         'per_class_tpr': tpr_list,
-        'per_class_fpr': fpr_list
+        'per_class_fpr': fpr_list,
+        'per_class_precision': precision_list,
+        'per_class_recall': recall_list,
+        'per_class_f1': f1_list,
+        'per_class_count': flow_counts
     }
 
 

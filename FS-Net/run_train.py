@@ -14,7 +14,7 @@ import numpy as np
 
 from models import create_fsnet, create_fsnet_nd
 from data import load_pickle_dataset, create_dataloaders
-from engine import train_one_epoch, evaluate, save_checkpoint, load_checkpoint, EarlyStopping
+from engine import train_one_epoch, evaluate, save_checkpoint, load_checkpoint
 
 
 # =============================================================================
@@ -36,10 +36,10 @@ USE_CLASS_WEIGHT = False  # Disable class weights
 
 # Training (Paper parameters)
 EPOCHS = 200
-BATCH_SIZE = 128
+BATCH_SIZE = 2048         # Increased for RTX 4090
 LEARNING_RATE = 0.0005    # Learning rate (paper: 0.0005)
-PATIENCE = 20             # Early stopping patience
-NUM_WORKERS = 4           # Data loading workers
+# PATIENCE = 20           # Early stopping (disabled)
+NUM_WORKERS = 0           # Windows compatibility (avoid multiprocessing issues)
 SEED = 42                 # Random seed for reproducibility
 
 # Dataset split ratio (8:1:1)
@@ -53,8 +53,9 @@ OUTPUT_DIR = "/home/pcz/DL/ML&DL/FS-Net/checkpoints"
 # Device
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Disable cuDNN for RNN (more stable)
-torch.backends.cudnn.enabled = False
+# Enable cuDNN for better GPU utilization
+torch.backends.cudnn.enabled = True
+torch.backends.cudnn.benchmark = True  # Auto-tune for best performance
 
 
 # =============================================================================
@@ -144,9 +145,6 @@ def main():
     # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-    # Early stopping
-    early_stopping = EarlyStopping(patience=PATIENCE)
-
     # Training loop
     best_f1 = 0.0
 
@@ -188,11 +186,6 @@ def main():
             )
             print(f"  -> Saved best model (F1: {best_f1:.4f})")
 
-        # Early stopping
-        if early_stopping(val_metrics['f1']):
-            print(f"\nEarly stopping at epoch {epoch}")
-            break
-
     # Final evaluation on test set
     print("\n" + "=" * 60)
     print("Final Evaluation on Test Set")
@@ -206,7 +199,9 @@ def main():
     )
 
     test_metrics = evaluate(model, test_loader, device, num_classes)
-    print(f"Test Results:")
+
+    # Print overall results
+    print(f"Overall Results:")
     print(f"  Accuracy:  {test_metrics['accuracy']:.4f}")
     print(f"  Precision: {test_metrics['precision']:.4f}")
     print(f"  Recall:    {test_metrics['recall']:.4f}")
@@ -214,6 +209,24 @@ def main():
     print(f"  TPR_AVE:   {test_metrics['tpr_avg']:.4f}")
     print(f"  FPR_AVE:   {test_metrics['fpr_avg']:.4f}")
 
+    # Print per-class results
+    print("\n" + "-" * 80)
+    print("Per-Class Results:")
+    print("-" * 80)
+    print(f"{'Class':<20} {'Count':>8} {'Precision':>10} {'Recall':>10} {'F1':>10} {'TPR':>10} {'FPR':>10}")
+    print("-" * 80)
+
+    for i in range(num_classes):
+        class_name = label_map.get(i, f"Class_{i}")
+        count = test_metrics['per_class_count'][i]
+        precision = test_metrics['per_class_precision'][i]
+        recall = test_metrics['per_class_recall'][i]
+        f1 = test_metrics['per_class_f1'][i]
+        tpr = test_metrics['per_class_tpr'][i]
+        fpr = test_metrics['per_class_fpr'][i]
+        print(f"{class_name:<20} {count:>8} {precision:>10.4f} {recall:>10.4f} {f1:>10.4f} {tpr:>10.4f} {fpr:>10.4f}")
+
+    print("-" * 80)
     print(f"\nModel saved to: {OUTPUT_DIR}/best.pth")
 
 
