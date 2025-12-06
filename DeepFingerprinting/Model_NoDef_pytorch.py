@@ -35,7 +35,8 @@ class _ConvBlock(nn.Module):
 
     def _init_weights(self, *, use_elu: bool) -> None:
         # He initialization adapted to the nonlinearity
-        nonlin = "relu" if not use_elu else "relu"  # ELU often uses the same gain
+        # Note: PyTorch doesn't have native ELU gain, using "relu" for both (common practice)
+        nonlin = "relu"
         for m in self.modules():
             if isinstance(m, nn.Conv1d):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity=nonlin)

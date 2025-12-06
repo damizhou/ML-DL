@@ -19,10 +19,14 @@ import numpy as np
 from torch import nn
 from torch.utils.data import Dataset, DataLoader, Subset
 from torch.nn.utils.rnn import pad_sequence
-from multiprocessing import Manager
+from functools import lru_cache
 
 torch.backends.cudnn.benchmark = True
-torch.backends.cuda.matmul.fp32_precision = "tf32"
+# Enable TF32 for faster computation on Ampere+ GPUs (compatible with older PyTorch)
+if hasattr(torch.backends.cuda.matmul, 'allow_tf32'):
+    torch.backends.cuda.matmul.allow_tf32 = True
+if hasattr(torch.backends.cudnn, 'allow_tf32'):
+    torch.backends.cudnn.allow_tf32 = True
 
 # —— 超参（保持很少）——
 EPOCHS          = 30
@@ -79,21 +83,24 @@ def simple_split(n: int, val_ratio=0.1, test_ratio=0.1) -> Tuple[np.ndarray, np.
 def collate_fn_fast(batch):
     # batch: List[Tuple[x, y]]；x 允许是 list/np.ndarray/torch.Tensor 的 1D 序列
     xs, ys = zip(*batch)
-    # 限长，转为 int8，避免 Python 循环逐元素 copy 的开销
+    # 固定输出长度为 MAX_LEN，确保与模型 fc1 层输入维度匹配
     t_list = []
     for x in xs:
+        # 创建固定长度的零数组
+        padded = np.zeros(MAX_LEN, dtype=np.int8)
         if isinstance(x, np.ndarray):
-            x = x[:MAX_LEN]
-            t = torch.from_numpy(x).to(torch.int8, copy=False)
+            length = min(len(x), MAX_LEN)
+            padded[:length] = x[:length]
         elif torch.is_tensor(x):
-            t = x[:MAX_LEN].to(torch.int8)
+            x_np = x.numpy()
+            length = min(len(x_np), MAX_LEN)
+            padded[:length] = x_np[:length]
         else:  # list 等
-            t = torch.tensor(x[:MAX_LEN], dtype=torch.int8)
-        t_list.append(t)
-    # 统一 padding 到同一长度（batch 内 max_len），padding=0
-    padded = pad_sequence(t_list, batch_first=True, padding_value=0)
-    # 模型通常吃 float；在 CPU 侧一次性转换，减少 GPU 上的 dtype 转换
-    xb = padded.to(torch.float32, copy=False)
+            length = min(len(x), MAX_LEN)
+            padded[:length] = x[:length]
+        t_list.append(torch.from_numpy(padded))
+    # 堆叠成 batch（所有序列长度相同，无需 pad_sequence）
+    xb = torch.stack(t_list).to(torch.float32)
     yb = torch.as_tensor(ys, dtype=torch.int64)
     return xb, yb
 
@@ -198,45 +205,36 @@ def evaluate(loader, model, criterion, device, use_amp: bool):
     except Exception:
         pass
     return avg_loss, acc, f1m, f1mi, f1w
-# ============ 懒加载 Dataset（文件级小缓存） ============
+# ============ 懒加载 Dataset（使用 LRU 本地缓存） ============
+# 全局 LRU 缓存函数（每个 worker 进程有独立缓存，避免跨进程通信开销）
+@lru_cache(maxsize=NPZ_CACHE_FILES)
+def _load_npz_flows(path: str):
+    """加载 NPZ 文件的 flows 数据，使用 LRU 缓存避免重复读取"""
+    with np.load(path, allow_pickle=True) as obj:
+        return obj["flows"]
+
+
 class LazyNPZDataset(Dataset):
     def __init__(self, file_paths: List[str], file_ids: np.ndarray, flow_idx: np.ndarray, y_ids: np.ndarray,
-                 max_len: int, shared_cache: Dict = None):
+                 max_len: int):
         self.file_paths = file_paths
         self.file_ids = file_ids.astype(np.int32, copy=False)
         self.flow_idx = flow_idx.astype(np.int32, copy=False)
         self.y = y_ids.astype(np.int64, copy=False)
         self.max_len = max_len
-        # 使用传入的共享缓存
-        self._cache = shared_cache  # 锁现在由 Manager 的字典隐式处理，无需手动管理
 
     def __len__(self) -> int:
         return int(self.y.shape[0])
 
-    def _get_flows(self, fid: int):
-        # 如果共享缓存不可用，则退回到不缓存的模式
-        if self._cache is None:
-            with np.load(self.file_paths[fid], allow_pickle=True) as obj:
-                return obj["flows"]
-
-        # 检查共享缓存
-        if fid in self._cache:
-            return self._cache[fid]
-
-        # 从磁盘加载并存入共享缓存
-        with np.load(self.file_paths[fid], allow_pickle=True) as obj:
-            flows = obj["flows"]
-        self._cache[fid] = flows
-        return flows
-
     def __getitem__(self, i: int):
         fid = int(self.file_ids[i])
         j = int(self.flow_idx[i])
-        s = np.asarray(self._get_flows(fid)[j], dtype=np.int8)
+        flows = _load_npz_flows(self.file_paths[fid])
+        s = np.asarray(flows[j], dtype=np.int8)
         return s, int(self.y[i])
 
 # ============ 主程序 ============
-def main(shared_cache: Dict = None): # 增加 shared_cache 参数
+def main():
     root_dir = Path(MULTI_NPZ_ROOT).expanduser().resolve()
     labels_json = Path(LABELS_JSON).expanduser().resolve() if LABELS_JSON else (root_dir / "labels.json")
 
@@ -248,8 +246,8 @@ def main(shared_cache: Dict = None): # 增加 shared_cache 参数
     file_paths, file_ids, flow_idx, y_ids, ncls = build_index(root_dir, label2id)
     print(f"samples={len(y_ids)}  classes={ncls}")
 
-    # 将共享缓存传递给 Dataset
-    base = LazyNPZDataset(file_paths, file_ids, flow_idx, y_ids, MAX_LEN, shared_cache=shared_cache)
+    # 使用 LRU 本地缓存（每个 worker 进程独立缓存）
+    base = LazyNPZDataset(file_paths, file_ids, flow_idx, y_ids, MAX_LEN)
     tr_idx, va_idx, te_idx = simple_split(len(base), 0.1, 0.1)
 
     dl_kwargs = dict(
@@ -334,8 +332,4 @@ def main(shared_cache: Dict = None): # 增加 shared_cache 参数
 
 
 if __name__ == "__main__":
-    with Manager() as manager:
-        # 创建一个由 Manager 管理的共享字典
-        print(f"Creating a shared cache for {NUM_WORKERS} workers...")
-        shared_npz_cache = manager.dict()
-        main(shared_cache=shared_npz_cache)
+    main()
