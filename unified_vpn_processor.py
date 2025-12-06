@@ -31,8 +31,10 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 import multiprocessing as mp
 import warnings
+import time
 
 import numpy as np
+import psutil
 from scipy import stats
 
 try:
@@ -49,6 +51,20 @@ except ImportError:
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 
 
+def wait_for_memory(threshold: float = 0.8, check_interval: float = 1.0):
+    """等待内存使用率降到阈值以下
+
+    Args:
+        threshold: 内存使用率阈值 (0.0-1.0)
+        check_interval: 检查间隔（秒）
+    """
+    while True:
+        mem = psutil.virtual_memory()
+        if mem.percent / 100.0 < threshold:
+            break
+        time.sleep(check_interval)
+
+
 # ============================================================================
 # 配置
 # ============================================================================
@@ -62,6 +78,7 @@ class Config:
 
     # 并行处理
     max_procs: int = 16
+    memory_limit: float = 0.8  # 内存使用率阈值 (80%)
 
     # 通用过滤
     min_pcap_size: int = 20 * 1024  # 20KB
@@ -510,8 +527,10 @@ def main():
                         help="VPN 数据集根目录")
     parser.add_argument("--output", type=str, default="./vpn_unified_output",
                         help="输出目录")
-    parser.add_argument("--procs", type=int, default=16,
+    parser.add_argument("--procs", type=int, default=24,
                         help="并行进程数")
+    parser.add_argument("--memory_limit", type=float, default=0.9,
+                        help="内存使用率阈值 (0.0-1.0，默认0.8即80%%)")
     parser.add_argument("--max_labels", type=int, default=0,
                         help="最大处理标签数（0=不限制）")
     args = parser.parse_args()
@@ -520,6 +539,7 @@ def main():
     config.root = Path(args.root)
     config.output = Path(args.output)
     config.max_procs = args.procs
+    config.memory_limit = args.memory_limit
 
     print("=" * 70)
     print("统一 VPN 数据处理脚本")
@@ -584,78 +604,130 @@ def main():
     appscanner_count = 0
     yatc_count = 0
 
-    print("\n开始处理（按 label 分批，节省内存）...")
+    print("\n开始处理（按 Label 优先，完成后立即保存释放内存）...")
     print("=" * 70)
 
-    # 按 label 逐个处理，处理完立即保存并释放内存
-    for label in tqdm(labels, desc="处理 Label"):
+    # 准备所有任务（按 label 分组，同一 label 的任务连续排列）
+    all_tasks = []
+    label_task_counts = {}  # 每个 label 的任务数
+    for label in labels:
         pcaps = label_to_pcaps[label]
-        label_id = label2id[label]
+        label_task_counts[label] = len(pcaps)
+        for pcap_path in pcaps:
+            all_tasks.append((pcap_path, label, config))
 
-        # 准备该 label 的任务
-        tasks = [(pcap_path, label, config) for pcap_path in pcaps]
+    print(f"总计 {len(all_tasks)} 个 PCAP 文件，使用 {config.max_procs} 个进程并行处理")
+    print(f"内存限制: {config.memory_limit * 100:.0f}%")
+    print(f"处理顺序: 按 Label 优先（共 {len(labels)} 个 Label）")
 
-        # 该 label 的特征
-        fsnet_data: List[np.ndarray] = []
-        df_data: List[np.ndarray] = []
-        appscanner_data: List[np.ndarray] = []
-        yatc_data: List[np.ndarray] = []
+    # 按 label 分组存储结果
+    label_fsnet: Dict[str, List[np.ndarray]] = defaultdict(list)
+    label_df: Dict[str, List[np.ndarray]] = defaultdict(list)
+    label_appscanner: Dict[str, List[np.ndarray]] = defaultdict(list)
+    label_yatc: Dict[str, List[np.ndarray]] = defaultdict(list)
 
-        # 多进程处理该 label 的所有 PCAP
-        with mp.Pool(processes=config.max_procs) as pool:
-            results = list(pool.imap_unordered(process_single_pcap, tasks))
+    # 跟踪每个 label 的完成数量
+    label_done_counts: Dict[str, int] = defaultdict(int)
+    saved_labels: set = set()
 
-        # 聚合该 label 的结果
-        for pcap_path, _, features in results:
-            if features.fsnet:
-                fsnet_data.extend(features.fsnet)
-            if features.df:
-                df_data.extend(features.df)
-            if features.appscanner:
-                appscanner_data.extend(features.appscanner)
-            if features.yatc:
-                yatc_data.extend(features.yatc)
+    # 内存监控计数器
+    memory_wait_count = 0
+    check_interval = 100  # 每处理 100 个文件检查一次内存
+    MIN_SAMPLES = 10
 
-        # 立即保存该 label 的数据（样本数不足 MIN_SAMPLES 则跳过）
-        MIN_SAMPLES = 10
+    def save_label_data(lbl: str):
+        """保存单个 label 的数据并释放内存"""
+        nonlocal fsnet_count, df_count, appscanner_count, yatc_count
+
+        lbl_id = label2id[lbl]
+        fsnet_data = label_fsnet.pop(lbl, [])
+        df_data = label_df.pop(lbl, [])
+        appscanner_data = label_appscanner.pop(lbl, [])
+        yatc_data = label_yatc.pop(lbl, [])
+
+        saved_any = False
 
         # FS-Net
         if len(fsnet_data) >= MIN_SAMPLES:
-            out_path = OUTPUT_DIRS["fsnet"] / f"{label}.npz"
-            np.savez_compressed(out_path, sequences=np.array(fsnet_data, dtype=object), label=label, label_id=label_id)
+            out_path = OUTPUT_DIRS["fsnet"] / f"{lbl}.npz"
+            np.savez_compressed(out_path, sequences=np.array(fsnet_data, dtype=object), label=lbl, label_id=lbl_id)
             fsnet_count += len(fsnet_data)
+            saved_any = True
         elif fsnet_data:
-            tqdm.write(f"  [跳过] {label} FS-Net: 样本数 {len(fsnet_data)} < {MIN_SAMPLES}")
+            tqdm.write(f"    [跳过] {lbl} FS-Net: 样本数 {len(fsnet_data)} < {MIN_SAMPLES}")
 
         # DeepFingerprinting
         if len(df_data) >= MIN_SAMPLES:
-            out_path = OUTPUT_DIRS["deepfingerprinting"] / f"{label}.npz"
-            np.savez_compressed(out_path, flows=np.array(df_data, dtype=object), label=label, label_id=label_id)
+            out_path = OUTPUT_DIRS["deepfingerprinting"] / f"{lbl}.npz"
+            np.savez_compressed(out_path, flows=np.array(df_data, dtype=object), label=lbl, label_id=lbl_id)
             df_count += len(df_data)
+            saved_any = True
         elif df_data:
-            tqdm.write(f"  [跳过] {label} DF: 样本数 {len(df_data)} < {MIN_SAMPLES}")
+            tqdm.write(f"    [跳过] {lbl} DF: 样本数 {len(df_data)} < {MIN_SAMPLES}")
 
         # AppScanner
         if len(appscanner_data) >= MIN_SAMPLES:
-            out_path = OUTPUT_DIRS["appscanner"] / f"{label}.npz"
-            np.savez_compressed(out_path, features=np.stack(appscanner_data, axis=0), label=label, label_id=label_id)
+            out_path = OUTPUT_DIRS["appscanner"] / f"{lbl}.npz"
+            np.savez_compressed(out_path, features=np.stack(appscanner_data, axis=0), label=lbl, label_id=lbl_id)
             appscanner_count += len(appscanner_data)
+            saved_any = True
         elif appscanner_data:
-            tqdm.write(f"  [跳过] {label} AppScanner: 样本数 {len(appscanner_data)} < {MIN_SAMPLES}")
+            tqdm.write(f"    [跳过] {lbl} AppScanner: 样本数 {len(appscanner_data)} < {MIN_SAMPLES}")
 
         # YaTC
         if len(yatc_data) >= MIN_SAMPLES:
-            out_path = OUTPUT_DIRS["yatc"] / f"{label}.npz"
-            np.savez_compressed(out_path, images=np.stack(yatc_data, axis=0), label=label, label_id=label_id)
+            out_path = OUTPUT_DIRS["yatc"] / f"{lbl}.npz"
+            np.savez_compressed(out_path, images=np.stack(yatc_data, axis=0), label=lbl, label_id=lbl_id)
             yatc_count += len(yatc_data)
+            saved_any = True
         elif yatc_data:
-            tqdm.write(f"  [跳过] {label} YaTC: 样本数 {len(yatc_data)} < {MIN_SAMPLES}")
+            tqdm.write(f"    [跳过] {lbl} YaTC: 样本数 {len(yatc_data)} < {MIN_SAMPLES}")
 
-        # 打印该 label 的统计
-        tqdm.write(f"  {label}: FS-Net={len(fsnet_data)}, DF={len(df_data)}, AppScanner={len(appscanner_data)}, YaTC={len(yatc_data)}")
+        if saved_any:
+            tqdm.write(f"  [完成] {lbl}: FS-Net={len(fsnet_data)}, DF={len(df_data)}, AppScanner={len(appscanner_data)}, YaTC={len(yatc_data)}")
 
-        # 释放内存
-        del fsnet_data, df_data, appscanner_data, yatc_data, results
+    # 全局 Pool 并行处理所有 PCAP
+    with mp.Pool(processes=config.max_procs) as pool:
+        for i, (pcap_path, label, features) in enumerate(tqdm(
+            pool.imap_unordered(process_single_pcap, all_tasks, chunksize=4),
+            total=len(all_tasks),
+            desc="处理 PCAP"
+        )):
+            # 定期检查内存使用率
+            if i > 0 and i % check_interval == 0:
+                mem = psutil.virtual_memory()
+                if mem.percent / 100.0 >= config.memory_limit:
+                    memory_wait_count += 1
+                    tqdm.write(f"  [内存] 使用率 {mem.percent:.1f}% >= {config.memory_limit * 100:.0f}%，等待释放...")
+                    wait_for_memory(config.memory_limit)
+                    tqdm.write(f"  [内存] 已恢复，继续处理")
+
+            # 收集结果
+            if features.fsnet:
+                label_fsnet[label].extend(features.fsnet)
+            if features.df:
+                label_df[label].extend(features.df)
+            if features.appscanner:
+                label_appscanner[label].extend(features.appscanner)
+            if features.yatc:
+                label_yatc[label].extend(features.yatc)
+
+            # 跟踪完成数量
+            label_done_counts[label] += 1
+
+            # 当一个 label 的所有任务完成后，立即保存并释放内存
+            if label not in saved_labels and label_done_counts[label] >= label_task_counts[label]:
+                save_label_data(label)
+                saved_labels.add(label)
+
+    # 保存剩余未保存的 label（理论上不应该有，但以防万一）
+    for label in labels:
+        if label not in saved_labels:
+            save_label_data(label)
+            saved_labels.add(label)
+
+    if memory_wait_count > 0:
+        print(f"\n[内存监控] 共触发 {memory_wait_count} 次内存等待")
 
     # 保存标签映射（只包含实际保存的标签）
     print("\n保存标签映射...")
