@@ -31,7 +31,7 @@ DATA_DIR = Path(__file__).parent / "vpn_unified_output"
 MAX_LEN = 5000  # 固定输入长度
 
 # 训练参数
-EPOCHS = 50
+EPOCHS = 10
 BATCH_SIZE = 256
 LEARNING_RATE = 3e-4
 WEIGHT_DECAY = 1e-4
@@ -99,22 +99,64 @@ def load_npz_data(data_dir: Path):
     return all_flows, np.array(all_labels), id2label
 
 
-def split_data(flows, labels, train_ratio, val_ratio, seed):
-    """划分数据集"""
+def split_data(flows, labels, train_ratio, val_ratio, seed, min_samples=10):
+    """分层划分数据集，每个类别按比例划分
+
+    Args:
+        flows: 流列表
+        labels: 标签数组
+        train_ratio: 训练集比例
+        val_ratio: 验证集比例
+        seed: 随机种子
+        min_samples: 每个类别最少样本数，不足则剔除该类别
+    """
     np.random.seed(seed)
-    indices = np.random.permutation(len(labels))
 
-    n_train = int(len(labels) * train_ratio)
-    n_val = int(len(labels) * val_ratio)
+    unique_labels = np.unique(labels)
 
-    train_idx = indices[:n_train]
-    val_idx = indices[n_train:n_train + n_val]
-    test_idx = indices[n_train + n_val:]
+    train_flows, train_labels = [], []
+    val_flows, val_labels = [], []
+    test_flows, test_labels = [], []
+
+    kept_classes = []
+    removed_classes = []
+
+    for label in unique_labels:
+        class_indices = np.where(labels == label)[0]
+
+        if len(class_indices) < min_samples:
+            removed_classes.append((label, len(class_indices)))
+            continue
+
+        kept_classes.append(label)
+        np.random.shuffle(class_indices)
+
+        n_train = int(len(class_indices) * train_ratio)
+        n_val = int(len(class_indices) * val_ratio)
+
+        train_idx = class_indices[:n_train]
+        val_idx = class_indices[n_train:n_train + n_val]
+        test_idx = class_indices[n_train + n_val:]
+
+        train_flows.extend([flows[i] for i in train_idx])
+        train_labels.extend([label] * len(train_idx))
+
+        val_flows.extend([flows[i] for i in val_idx])
+        val_labels.extend([label] * len(val_idx))
+
+        test_flows.extend([flows[i] for i in test_idx])
+        test_labels.extend([label] * len(test_idx))
+
+    if removed_classes:
+        print(f"\n[Warning] 以下类别样本数不足 {min_samples}，已剔除:")
+        for label, count in removed_classes:
+            print(f"  - 类别 {label}: {count} 个样本")
 
     return (
-        ([flows[i] for i in train_idx], labels[train_idx]),
-        ([flows[i] for i in val_idx], labels[val_idx]),
-        ([flows[i] for i in test_idx], labels[test_idx]),
+        (train_flows, np.array(train_labels)),
+        (val_flows, np.array(val_labels)),
+        (test_flows, np.array(test_labels)),
+        kept_classes
     )
 
 
@@ -186,18 +228,28 @@ def main():
 
     # 加载数据
     print("\nLoading data...")
-    flows, labels, id2label = load_npz_data(DATA_DIR)
-    num_classes = len(id2label)
+    flows, labels, id2label_orig = load_npz_data(DATA_DIR)
 
     print(f"Total samples: {len(labels)}")
-    print(f"Num classes: {num_classes}")
+    print(f"Original classes: {len(id2label_orig)}")
 
-    # 划分数据
-    (train_flows, train_y), (val_flows, val_y), (test_flows, test_y) = split_data(
-        flows, labels, TRAIN_RATIO, VAL_RATIO, SEED
+    # 划分数据（分层划分，剔除样本不足的类别）
+    (train_flows, train_y), (val_flows, val_y), (test_flows, test_y), kept_classes = split_data(
+        flows, labels, TRAIN_RATIO, VAL_RATIO, SEED, min_samples=10
     )
 
-    print(f"\nSplit: train={len(train_y)}, val={len(val_y)}, test={len(test_y)}")
+    # 重新映射标签到连续的 0, 1, 2, ...
+    old_to_new = {old_label: new_label for new_label, old_label in enumerate(kept_classes)}
+    train_y = np.array([old_to_new[y] for y in train_y])
+    val_y = np.array([old_to_new[y] for y in val_y])
+    test_y = np.array([old_to_new[y] for y in test_y])
+
+    # 更新 id2label
+    id2label = {new_label: id2label_orig[old_label] for old_label, new_label in old_to_new.items()}
+    num_classes = len(kept_classes)
+
+    print(f"Kept classes: {num_classes}")
+    print(f"Split (stratified): train={len(train_y)}, val={len(val_y)}, test={len(test_y)}")
 
     # 创建 DataLoader
     train_loader = DataLoader(

@@ -35,7 +35,7 @@ USE_NO_DECODER = False    # True: FS-Net-ND, False: FS-Net
 USE_CLASS_WEIGHT = False  # Disable class weights
 
 # Training (Paper parameters)
-EPOCHS = 200
+EPOCHS = 10
 BATCH_SIZE = 2048         # Increased for RTX 4090
 LEARNING_RATE = 0.0005    # Learning rate (paper: 0.0005)
 # PATIENCE = 20           # Early stopping (disabled)

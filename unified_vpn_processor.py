@@ -512,7 +512,7 @@ def main():
                         help="输出目录")
     parser.add_argument("--procs", type=int, default=16,
                         help="并行进程数")
-    parser.add_argument("--max_labels", type=int, default=10,
+    parser.add_argument("--max_labels", type=int, default=0,
                         help="最大处理标签数（0=不限制）")
     args = parser.parse_args()
 
@@ -616,30 +616,40 @@ def main():
             if features.yatc:
                 yatc_data.extend(features.yatc)
 
-        # 立即保存该 label 的数据
+        # 立即保存该 label 的数据（样本数不足 MIN_SAMPLES 则跳过）
+        MIN_SAMPLES = 10
+
         # FS-Net
-        if fsnet_data:
+        if len(fsnet_data) >= MIN_SAMPLES:
             out_path = OUTPUT_DIRS["fsnet"] / f"{label}.npz"
             np.savez_compressed(out_path, sequences=np.array(fsnet_data, dtype=object), label=label, label_id=label_id)
             fsnet_count += len(fsnet_data)
+        elif fsnet_data:
+            tqdm.write(f"  [跳过] {label} FS-Net: 样本数 {len(fsnet_data)} < {MIN_SAMPLES}")
 
         # DeepFingerprinting
-        if df_data:
+        if len(df_data) >= MIN_SAMPLES:
             out_path = OUTPUT_DIRS["deepfingerprinting"] / f"{label}.npz"
             np.savez_compressed(out_path, flows=np.array(df_data, dtype=object), label=label, label_id=label_id)
             df_count += len(df_data)
+        elif df_data:
+            tqdm.write(f"  [跳过] {label} DF: 样本数 {len(df_data)} < {MIN_SAMPLES}")
 
         # AppScanner
-        if appscanner_data:
+        if len(appscanner_data) >= MIN_SAMPLES:
             out_path = OUTPUT_DIRS["appscanner"] / f"{label}.npz"
             np.savez_compressed(out_path, features=np.stack(appscanner_data, axis=0), label=label, label_id=label_id)
             appscanner_count += len(appscanner_data)
+        elif appscanner_data:
+            tqdm.write(f"  [跳过] {label} AppScanner: 样本数 {len(appscanner_data)} < {MIN_SAMPLES}")
 
         # YaTC
-        if yatc_data:
+        if len(yatc_data) >= MIN_SAMPLES:
             out_path = OUTPUT_DIRS["yatc"] / f"{label}.npz"
             np.savez_compressed(out_path, images=np.stack(yatc_data, axis=0), label=label, label_id=label_id)
             yatc_count += len(yatc_data)
+        elif yatc_data:
+            tqdm.write(f"  [跳过] {label} YaTC: 样本数 {len(yatc_data)} < {MIN_SAMPLES}")
 
         # 打印该 label 的统计
         tqdm.write(f"  {label}: FS-Net={len(fsnet_data)}, DF={len(df_data)}, AppScanner={len(appscanner_data)}, YaTC={len(yatc_data)}")
@@ -647,7 +657,7 @@ def main():
         # 释放内存
         del fsnet_data, df_data, appscanner_data, yatc_data, results
 
-    # 保存标签映射
+    # 保存标签映射（只包含实际保存的标签）
     print("\n保存标签映射...")
     extra_metas = {
         "fsnet": None,
@@ -675,15 +685,21 @@ def main():
         }
     }
     for model_name, out_dir in OUTPUT_DIRS.items():
+        # 扫描实际保存的 NPZ 文件，只保留有效标签
+        saved_labels = sorted([f.stem for f in out_dir.glob("*.npz")])
+        model_label2id = {label: i for i, label in enumerate(saved_labels)}
+        model_id2label = {i: label for i, label in enumerate(saved_labels)}
+
         labels_json = {
-            "label2id": label2id,
-            "id2label": {str(k): v for k, v in id2label.items()}
+            "label2id": model_label2id,
+            "id2label": {str(k): v for k, v in model_id2label.items()}
         }
         extra_meta = extra_metas.get(model_name)
         if extra_meta:
             labels_json.update(extra_meta)
         with open(out_dir / "labels.json", "w", encoding="utf-8") as f:
             json.dump(labels_json, f, ensure_ascii=False, indent=2)
+        print(f"  {model_name}: {len(saved_labels)} 个有效类别")
 
     # 总结
     print("\n" + "=" * 70)

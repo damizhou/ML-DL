@@ -284,7 +284,8 @@ class MFRNpzDataset(Dataset):
         train_ratio: float = 0.8,
         val_ratio: float = 0.1,
         split: str = 'train',
-        seed: int = 42
+        seed: int = 42,
+        min_samples: int = 10
     ):
         """Initialize NPZ dataset.
 
@@ -296,6 +297,7 @@ class MFRNpzDataset(Dataset):
             val_ratio: Ratio for validation split
             split: 'train', 'val', or 'test'
             seed: Random seed for reproducible splits
+            min_samples: Minimum samples per class, classes with fewer samples are removed
         """
         self.data_path = Path(data_path)
         self.transform = transform
@@ -307,24 +309,35 @@ class MFRNpzDataset(Dataset):
         with open(labels_json, "r", encoding="utf-8") as f:
             meta = json.load(f)
 
-        self.label2id = meta["label2id"]
-        self.id2label = {int(k): v for k, v in meta["id2label"].items()}
-        self.classes = list(self.label2id.keys())
-        self.num_classes = len(self.classes)
+        label2id_orig = meta["label2id"]
+        id2label_orig = {int(k): v for k, v in meta["id2label"].items()}
 
-        # Load all images and labels
+        # Load all images and labels, filter by min_samples
         all_images = []
         all_labels = []
+        kept_classes = []
+        removed_classes = []
 
-        for label_name, label_id in self.label2id.items():
+        for label_name, label_id in label2id_orig.items():
             npz_path = self.data_path / f"{label_name}.npz"
             if not npz_path.exists():
                 continue
 
             with np.load(npz_path, allow_pickle=True) as data:
                 images = data["images"]  # (N, 40, 40)
+
+                if len(images) < min_samples:
+                    removed_classes.append((label_name, len(images)))
+                    continue
+
+                kept_classes.append(label_id)
                 all_images.append(images)
                 all_labels.extend([label_id] * len(images))
+
+        if removed_classes and split == 'train':
+            print(f"\n[Warning] 以下类别样本数不足 {min_samples}，已剔除:")
+            for label_name, count in removed_classes:
+                print(f"  - {label_name}: {count} 个样本")
 
         if not all_images:
             raise ValueError(f"No images found in {data_path}")
@@ -332,22 +345,52 @@ class MFRNpzDataset(Dataset):
         all_images = np.vstack(all_images)
         all_labels = np.array(all_labels)
 
-        # Split data
-        np.random.seed(seed)
-        indices = np.random.permutation(len(all_labels))
+        # Remap labels to continuous 0, 1, 2, ...
+        old_to_new = {old_label: new_label for new_label, old_label in enumerate(kept_classes)}
+        all_labels = np.array([old_to_new[y] for y in all_labels])
 
-        n_train = int(len(all_labels) * train_ratio)
-        n_val = int(len(all_labels) * val_ratio)
+        # Update label mappings
+        self.label2id = {id2label_orig[old]: new for old, new in old_to_new.items()}
+        self.id2label = {new: id2label_orig[old] for old, new in old_to_new.items()}
+        self.classes = list(self.label2id.keys())
+        self.num_classes = len(kept_classes)
+
+        # Stratified split: each class split by ratio
+        np.random.seed(seed)
+
+        train_images, train_labels = [], []
+        val_images, val_labels = [], []
+        test_images, test_labels = [], []
+
+        for label in range(self.num_classes):
+            class_indices = np.where(all_labels == label)[0]
+            np.random.shuffle(class_indices)
+
+            n_train = int(len(class_indices) * train_ratio)
+            n_val = int(len(class_indices) * val_ratio)
+
+            train_idx = class_indices[:n_train]
+            val_idx = class_indices[n_train:n_train + n_val]
+            test_idx = class_indices[n_train + n_val:]
+
+            train_images.append(all_images[train_idx])
+            train_labels.extend([label] * len(train_idx))
+
+            val_images.append(all_images[val_idx])
+            val_labels.extend([label] * len(val_idx))
+
+            test_images.append(all_images[test_idx])
+            test_labels.extend([label] * len(test_idx))
 
         if split == 'train':
-            idx = indices[:n_train]
+            self.images = np.vstack(train_images)
+            self.labels = np.array(train_labels)
         elif split == 'val':
-            idx = indices[n_train:n_train + n_val]
+            self.images = np.vstack(val_images)
+            self.labels = np.array(val_labels)
         else:  # test
-            idx = indices[n_train + n_val:]
-
-        self.images = all_images[idx]
-        self.labels = all_labels[idx]
+            self.images = np.vstack(test_images)
+            self.labels = np.array(test_labels)
 
     def __len__(self) -> int:
         return len(self.labels)
@@ -546,7 +589,8 @@ def build_npz_finetune_dataloader(
     target_transform: Optional[Callable] = None,
     train_ratio: float = 0.8,
     val_ratio: float = 0.1,
-    seed: int = 42
+    seed: int = 42,
+    min_samples: int = 10
 ) -> Tuple[DataLoader, int]:
     """Build dataloader for fine-tuning from NPZ files.
 
@@ -561,6 +605,7 @@ def build_npz_finetune_dataloader(
         train_ratio: Ratio for train split
         val_ratio: Ratio for validation split
         seed: Random seed for reproducible splits
+        min_samples: Minimum samples per class, classes with fewer samples are removed
 
     Returns:
         Tuple of (DataLoader, num_classes)
@@ -572,7 +617,8 @@ def build_npz_finetune_dataloader(
         train_ratio=train_ratio,
         val_ratio=val_ratio,
         split=split,
-        seed=seed
+        seed=seed,
+        min_samples=min_samples
     )
     dataloader = DataLoader(
         dataset,

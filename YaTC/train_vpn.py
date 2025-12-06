@@ -162,7 +162,7 @@ def finetune(args):
 
     device = torch.device(DEVICE)
 
-    # 创建数据加载器
+    # 创建数据加载器（分层划分，剔除样本不足的类别）
     train_loader, num_classes = build_npz_finetune_dataloader(
         DATA_DIR,
         split='train',
@@ -170,7 +170,8 @@ def finetune(args):
         num_workers=0,
         shuffle=True,
         train_ratio=0.8,
-        val_ratio=0.1
+        val_ratio=0.1,
+        min_samples=10
     )
     val_loader, _ = build_npz_finetune_dataloader(
         DATA_DIR,
@@ -179,7 +180,8 @@ def finetune(args):
         num_workers=0,
         shuffle=False,
         train_ratio=0.8,
-        val_ratio=0.1
+        val_ratio=0.1,
+        min_samples=10
     )
     test_loader, _ = build_npz_finetune_dataloader(
         DATA_DIR,
@@ -188,7 +190,8 @@ def finetune(args):
         num_workers=0,
         shuffle=False,
         train_ratio=0.8,
-        val_ratio=0.1
+        val_ratio=0.1,
+        min_samples=10
     )
 
     print("=" * 60)

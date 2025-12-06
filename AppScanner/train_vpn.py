@@ -33,7 +33,7 @@ HIDDEN_DIMS = [256, 128, 64]
 DROPOUT = 0.3
 
 # 训练参数
-EPOCHS = 100
+EPOCHS = 10
 BATCH_SIZE = 128
 LEARNING_RATE = 0.001
 WEIGHT_DECAY = 1e-4
@@ -92,22 +92,64 @@ def normalize_features(X_train, X_val, X_test):
     return X_train, X_val, X_test
 
 
-def split_data(features, labels, train_ratio, val_ratio, seed):
-    """划分数据集"""
+def split_data(features, labels, train_ratio, val_ratio, seed, min_samples=10):
+    """分层划分数据集，每个类别按比例划分
+
+    Args:
+        features: 特征数组
+        labels: 标签数组
+        train_ratio: 训练集比例
+        val_ratio: 验证集比例
+        seed: 随机种子
+        min_samples: 每个类别最少样本数，不足则剔除该类别
+    """
     np.random.seed(seed)
-    indices = np.random.permutation(len(labels))
 
-    n_train = int(len(labels) * train_ratio)
-    n_val = int(len(labels) * val_ratio)
+    unique_labels = np.unique(labels)
 
-    train_idx = indices[:n_train]
-    val_idx = indices[n_train:n_train + n_val]
-    test_idx = indices[n_train + n_val:]
+    train_features, train_labels = [], []
+    val_features, val_labels = [], []
+    test_features, test_labels = [], []
+
+    kept_classes = []
+    removed_classes = []
+
+    for label in unique_labels:
+        class_indices = np.where(labels == label)[0]
+
+        if len(class_indices) < min_samples:
+            removed_classes.append((label, len(class_indices)))
+            continue
+
+        kept_classes.append(label)
+        np.random.shuffle(class_indices)
+
+        n_train = int(len(class_indices) * train_ratio)
+        n_val = int(len(class_indices) * val_ratio)
+
+        train_idx = class_indices[:n_train]
+        val_idx = class_indices[n_train:n_train + n_val]
+        test_idx = class_indices[n_train + n_val:]
+
+        train_features.append(features[train_idx])
+        train_labels.extend([label] * len(train_idx))
+
+        val_features.append(features[val_idx])
+        val_labels.extend([label] * len(val_idx))
+
+        test_features.append(features[test_idx])
+        test_labels.extend([label] * len(test_idx))
+
+    if removed_classes:
+        print(f"\n[Warning] 以下类别样本数不足 {min_samples}，已剔除:")
+        for label, count in removed_classes:
+            print(f"  - 类别 {label}: {count} 个样本")
 
     return (
-        (features[train_idx], labels[train_idx]),
-        (features[val_idx], labels[val_idx]),
-        (features[test_idx], labels[test_idx]),
+        (np.vstack(train_features), np.array(train_labels)),
+        (np.vstack(val_features), np.array(val_labels)),
+        (np.vstack(test_features), np.array(test_labels)),
+        kept_classes
     )
 
 
@@ -173,19 +215,29 @@ def main():
 
     # 加载数据
     print("\nLoading data...")
-    features, labels, id2label = load_npz_data(DATA_DIR)
-    num_classes = len(id2label)
+    features, labels, id2label_orig = load_npz_data(DATA_DIR)
 
     print(f"Total samples: {len(labels)}")
-    print(f"Num classes: {num_classes}")
+    print(f"Original classes: {len(id2label_orig)}")
     print(f"Feature dim: {features.shape[1]}")
 
-    # 划分数据
-    (train_X, train_y), (val_X, val_y), (test_X, test_y) = split_data(
-        features, labels, TRAIN_RATIO, VAL_RATIO, SEED
+    # 划分数据（分层划分，剔除样本不足的类别）
+    (train_X, train_y), (val_X, val_y), (test_X, test_y), kept_classes = split_data(
+        features, labels, TRAIN_RATIO, VAL_RATIO, SEED, min_samples=10
     )
 
-    print(f"\nSplit: train={len(train_y)}, val={len(val_y)}, test={len(test_y)}")
+    # 重新映射标签到连续的 0, 1, 2, ...
+    old_to_new = {old_label: new_label for new_label, old_label in enumerate(kept_classes)}
+    train_y = np.array([old_to_new[y] for y in train_y])
+    val_y = np.array([old_to_new[y] for y in val_y])
+    test_y = np.array([old_to_new[y] for y in test_y])
+
+    # 更新 id2label
+    id2label = {new_label: id2label_orig[old_label] for old_label, new_label in old_to_new.items()}
+    num_classes = len(kept_classes)
+
+    print(f"Kept classes: {num_classes}")
+    print(f"Split (stratified): train={len(train_y)}, val={len(val_y)}, test={len(test_y)}")
 
     # 标准化
     train_X, val_X, test_X = normalize_features(train_X, val_X, test_X)
