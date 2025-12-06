@@ -529,7 +529,7 @@ def main():
                         help="输出目录")
     parser.add_argument("--procs", type=int, default=24,
                         help="并行进程数")
-    parser.add_argument("--memory_limit", type=float, default=0.9,
+    parser.add_argument("--memory_limit", type=float, default=0.7,
                         help="内存使用率阈值 (0.0-1.0，默认0.8即80%%)")
     parser.add_argument("--max_labels", type=int, default=0,
                         help="最大处理标签数（0=不限制）")
@@ -598,93 +598,142 @@ def main():
     for out_dir in OUTPUT_DIRS.values():
         out_dir.mkdir(parents=True, exist_ok=True)
 
+    # 进度文件（用于断点续传）
+    progress_file = config.output / "progress.json"
+
+    def load_completed_labels() -> set:
+        """加载已完成的 labels"""
+        if progress_file.exists():
+            try:
+                with open(progress_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    return set(data.get("completed_labels", []))
+            except:
+                return set()
+        return set()
+
+    def save_completed_labels(completed: set):
+        """保存已完成的 labels"""
+        # 确保输出目录存在
+        progress_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(progress_file, "w", encoding="utf-8") as f:
+            json.dump({"completed_labels": sorted(completed)}, f, ensure_ascii=False, indent=2)
+
+    # 加载已完成的 labels
+    completed_labels = load_completed_labels()
+    if completed_labels:
+        print(f"\n[断点续传] 发现 {len(completed_labels)} 个已完成的 Label，将跳过:")
+        for lbl in sorted(completed_labels):
+            print(f"  - {lbl}")
+
+    # 过滤掉已完成的 labels
+    pending_labels = [lbl for lbl in labels if lbl not in completed_labels]
+    skipped_count = len(labels) - len(pending_labels)
+
+    if skipped_count > 0:
+        print(f"\n[跳过] {skipped_count} 个已完成的 Label")
+        print(f"[待处理] {len(pending_labels)} 个 Label")
+
+    if not pending_labels:
+        print("\n所有 Label 已处理完成，无需重复处理。")
+        print("如需重新处理，请删除进度文件:", progress_file)
+        return
+
     # 统计
     fsnet_count = 0
     df_count = 0
     appscanner_count = 0
     yatc_count = 0
 
-    print("\n开始处理（按 Label 优先，完成后立即保存释放内存）...")
-    print("=" * 70)
-
-    # 准备所有任务（按 label 分组，同一 label 的任务连续排列）
+    # 准备所有任务（按 label 分组）
     all_tasks = []
     label_task_counts = {}  # 每个 label 的任务数
-    for label in labels:
+    for label in pending_labels:
         pcaps = label_to_pcaps[label]
         label_task_counts[label] = len(pcaps)
         for pcap_path in pcaps:
             all_tasks.append((pcap_path, label, config))
 
+    print("\n开始处理（混合并行：全局调度 + 即时释放内存）...")
+    print("=" * 70)
     print(f"总计 {len(all_tasks)} 个 PCAP 文件，使用 {config.max_procs} 个进程并行处理")
     print(f"内存限制: {config.memory_limit * 100:.0f}%")
-    print(f"处理顺序: 按 Label 优先（共 {len(labels)} 个 Label）")
+    print(f"待处理 Label: {len(pending_labels)} 个")
 
-    # 按 label 分组存储结果
-    label_fsnet: Dict[str, List[np.ndarray]] = defaultdict(list)
-    label_df: Dict[str, List[np.ndarray]] = defaultdict(list)
-    label_appscanner: Dict[str, List[np.ndarray]] = defaultdict(list)
-    label_yatc: Dict[str, List[np.ndarray]] = defaultdict(list)
+    # 每个 label 的数据收集器
+    label_data: Dict[str, Dict[str, List[np.ndarray]]] = {
+        label: {"fsnet": [], "df": [], "appscanner": [], "yatc": []}
+        for label in pending_labels
+    }
 
     # 跟踪每个 label 的完成数量
     label_done_counts: Dict[str, int] = defaultdict(int)
     saved_labels: set = set()
 
-    # 内存监控计数器
+    # 内存监控
     memory_wait_count = 0
-    check_interval = 100  # 每处理 100 个文件检查一次内存
+    check_interval = 50
     MIN_SAMPLES = 10
 
-    def save_label_data(lbl: str):
+    def save_and_release_label(lbl: str):
         """保存单个 label 的数据并释放内存"""
         nonlocal fsnet_count, df_count, appscanner_count, yatc_count
 
+        if lbl not in label_data:
+            return
+
         lbl_id = label2id[lbl]
-        fsnet_data = label_fsnet.pop(lbl, [])
-        df_data = label_df.pop(lbl, [])
-        appscanner_data = label_appscanner.pop(lbl, [])
-        yatc_data = label_yatc.pop(lbl, [])
+        data = label_data.pop(lbl)  # 取出并删除，释放内存
+
+        fsnet_list = data["fsnet"]
+        df_list = data["df"]
+        appscanner_list = data["appscanner"]
+        yatc_list = data["yatc"]
 
         saved_any = False
 
         # FS-Net
-        if len(fsnet_data) >= MIN_SAMPLES:
+        if len(fsnet_list) >= MIN_SAMPLES:
             out_path = OUTPUT_DIRS["fsnet"] / f"{lbl}.npz"
-            np.savez_compressed(out_path, sequences=np.array(fsnet_data, dtype=object), label=lbl, label_id=lbl_id)
-            fsnet_count += len(fsnet_data)
+            np.savez_compressed(out_path, sequences=np.array(fsnet_list, dtype=object), label=lbl, label_id=lbl_id)
+            fsnet_count += len(fsnet_list)
             saved_any = True
-        elif fsnet_data:
-            tqdm.write(f"    [跳过] {lbl} FS-Net: 样本数 {len(fsnet_data)} < {MIN_SAMPLES}")
+        elif fsnet_list:
+            tqdm.write(f"    [跳过] {lbl} FS-Net: 样本数 {len(fsnet_list)} < {MIN_SAMPLES}")
 
         # DeepFingerprinting
-        if len(df_data) >= MIN_SAMPLES:
+        if len(df_list) >= MIN_SAMPLES:
             out_path = OUTPUT_DIRS["deepfingerprinting"] / f"{lbl}.npz"
-            np.savez_compressed(out_path, flows=np.array(df_data, dtype=object), label=lbl, label_id=lbl_id)
-            df_count += len(df_data)
+            np.savez_compressed(out_path, flows=np.array(df_list, dtype=object), label=lbl, label_id=lbl_id)
+            df_count += len(df_list)
             saved_any = True
-        elif df_data:
-            tqdm.write(f"    [跳过] {lbl} DF: 样本数 {len(df_data)} < {MIN_SAMPLES}")
+        elif df_list:
+            tqdm.write(f"    [跳过] {lbl} DF: 样本数 {len(df_list)} < {MIN_SAMPLES}")
 
         # AppScanner
-        if len(appscanner_data) >= MIN_SAMPLES:
+        if len(appscanner_list) >= MIN_SAMPLES:
             out_path = OUTPUT_DIRS["appscanner"] / f"{lbl}.npz"
-            np.savez_compressed(out_path, features=np.stack(appscanner_data, axis=0), label=lbl, label_id=lbl_id)
-            appscanner_count += len(appscanner_data)
+            np.savez_compressed(out_path, features=np.stack(appscanner_list, axis=0), label=lbl, label_id=lbl_id)
+            appscanner_count += len(appscanner_list)
             saved_any = True
-        elif appscanner_data:
-            tqdm.write(f"    [跳过] {lbl} AppScanner: 样本数 {len(appscanner_data)} < {MIN_SAMPLES}")
+        elif appscanner_list:
+            tqdm.write(f"    [跳过] {lbl} AppScanner: 样本数 {len(appscanner_list)} < {MIN_SAMPLES}")
 
         # YaTC
-        if len(yatc_data) >= MIN_SAMPLES:
+        if len(yatc_list) >= MIN_SAMPLES:
             out_path = OUTPUT_DIRS["yatc"] / f"{lbl}.npz"
-            np.savez_compressed(out_path, images=np.stack(yatc_data, axis=0), label=lbl, label_id=lbl_id)
-            yatc_count += len(yatc_data)
+            np.savez_compressed(out_path, images=np.stack(yatc_list, axis=0), label=lbl, label_id=lbl_id)
+            yatc_count += len(yatc_list)
             saved_any = True
-        elif yatc_data:
-            tqdm.write(f"    [跳过] {lbl} YaTC: 样本数 {len(yatc_data)} < {MIN_SAMPLES}")
+        elif yatc_list:
+            tqdm.write(f"    [跳过] {lbl} YaTC: 样本数 {len(yatc_list)} < {MIN_SAMPLES}")
 
         if saved_any:
-            tqdm.write(f"  [完成] {lbl}: FS-Net={len(fsnet_data)}, DF={len(df_data)}, AppScanner={len(appscanner_data)}, YaTC={len(yatc_data)}")
+            tqdm.write(f"  [完成] {lbl}: FS-Net={len(fsnet_list)}, DF={len(df_list)}, AppScanner={len(appscanner_list)}, YaTC={len(yatc_list)}")
+
+        # 更新进度文件
+        completed_labels.add(lbl)
+        save_completed_labels(completed_labels)
 
     # 全局 Pool 并行处理所有 PCAP
     with mp.Pool(processes=config.max_procs) as pool:
@@ -693,37 +742,51 @@ def main():
             total=len(all_tasks),
             desc="处理 PCAP"
         )):
+            # 打印当前处理完成的文件
+            pcap_name = Path(pcap_path).name
+            tqdm.write(f"  [{label}] {pcap_name}")
+
             # 定期检查内存使用率
             if i > 0 and i % check_interval == 0:
                 mem = psutil.virtual_memory()
                 if mem.percent / 100.0 >= config.memory_limit:
                     memory_wait_count += 1
-                    tqdm.write(f"  [内存] 使用率 {mem.percent:.1f}% >= {config.memory_limit * 100:.0f}%，等待释放...")
-                    wait_for_memory(config.memory_limit)
+                    tqdm.write(f"  [内存] 使用率 {mem.percent:.1f}% >= {config.memory_limit * 100:.0f}%，暂停接收...")
+
+                    # 先保存所有已完成的 label
+                    for lbl in list(label_data.keys()):
+                        if label_done_counts[lbl] >= label_task_counts[lbl] and lbl not in saved_labels:
+                            save_and_release_label(lbl)
+                            saved_labels.add(lbl)
+
+                    # 如果内存仍然超限，等待
+                    if psutil.virtual_memory().percent / 100.0 >= config.memory_limit:
+                        wait_for_memory(config.memory_limit)
                     tqdm.write(f"  [内存] 已恢复，继续处理")
 
-            # 收集结果
-            if features.fsnet:
-                label_fsnet[label].extend(features.fsnet)
-            if features.df:
-                label_df[label].extend(features.df)
-            if features.appscanner:
-                label_appscanner[label].extend(features.appscanner)
-            if features.yatc:
-                label_yatc[label].extend(features.yatc)
+            # 收集结果（只有该 label 还未保存时才收集）
+            if label in label_data:
+                if features.fsnet:
+                    label_data[label]["fsnet"].extend(features.fsnet)
+                if features.df:
+                    label_data[label]["df"].extend(features.df)
+                if features.appscanner:
+                    label_data[label]["appscanner"].extend(features.appscanner)
+                if features.yatc:
+                    label_data[label]["yatc"].extend(features.yatc)
 
             # 跟踪完成数量
             label_done_counts[label] += 1
 
             # 当一个 label 的所有任务完成后，立即保存并释放内存
             if label not in saved_labels and label_done_counts[label] >= label_task_counts[label]:
-                save_label_data(label)
+                save_and_release_label(label)
                 saved_labels.add(label)
 
     # 保存剩余未保存的 label（理论上不应该有，但以防万一）
-    for label in labels:
+    for label in pending_labels:
         if label not in saved_labels:
-            save_label_data(label)
+            save_and_release_label(label)
             saved_labels.add(label)
 
     if memory_wait_count > 0:
@@ -794,6 +857,9 @@ def main():
     print(f"  │   └── ...")
     print(f"  └── YaTC/{output_subdir}/")
     print(f"      └── ...")
+    print(f"\n进度文件: {progress_file}")
+    print(f"已完成 Label: {len(completed_labels)} 个")
+    print(f"如需重新处理所有数据，请删除进度文件。")
 
 
 if __name__ == "__main__":
