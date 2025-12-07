@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 import multiprocessing as mp
 import warnings
 import time
+import gc
 
 import numpy as np
 import psutil
@@ -51,18 +52,27 @@ except ImportError:
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 
 
-def wait_for_memory(threshold: float = 0.8, check_interval: float = 1.0):
+def wait_for_memory(threshold: float = 0.8, check_interval: float = 1.0, max_wait: float = 60.0):
     """等待内存使用率降到阈值以下
 
     Args:
         threshold: 内存使用率阈值 (0.0-1.0)
         check_interval: 检查间隔（秒）
+        max_wait: 最大等待时间（秒），超时后强制继续
     """
-    while True:
+    # 先尝试强制 GC
+    gc.collect()
+
+    waited = 0.0
+    while waited < max_wait:
         mem = psutil.virtual_memory()
         if mem.percent / 100.0 < threshold:
             break
         time.sleep(check_interval)
+        waited += check_interval
+        # 每 10 秒再尝试一次 GC
+        if waited % 10 < check_interval:
+            gc.collect()
 
 
 # ============================================================================
@@ -579,7 +589,7 @@ def main():
     for label in labels:
         count = len(label_to_pcaps[label])
         total_pcaps += count
-        print(f"  - {label}: {count} 个 PCAP 文件")
+        # print(f"  - {label}: {count} 个 PCAP 文件")
 
     print(f"\n总计 {total_pcaps} 个 PCAP 文件待处理")
 
@@ -672,8 +682,8 @@ def main():
 
     # 内存监控
     memory_wait_count = 0
-    check_interval = 50
     MIN_SAMPLES = 10
+    BATCH_SIZE = config.max_procs * 2  # 每批提交的任务数
 
     def save_and_release_label(lbl: str):
         """保存单个 label 的数据并释放内存"""
@@ -735,53 +745,102 @@ def main():
         completed_labels.add(lbl)
         save_completed_labels(completed_labels)
 
-    # 全局 Pool 并行处理所有 PCAP
+    # 流式并行处理（使用 apply_async + 主动限流）
+    pbar = tqdm(total=len(all_tasks), desc="处理 PCAP")
+
+    # 控制同时进行的任务数
+    MAX_PENDING = config.max_procs  # 最多同时 pending 的任务数
+    pending_results = []  # (AsyncResult, task_info) 列表
+    task_index = 0
+
+    def collect_completed():
+        """收集已完成的结果并处理"""
+        nonlocal pending_results
+        still_pending = []
+        collected = 0
+
+        for async_result, task_info in pending_results:
+            if async_result.ready():
+                try:
+                    pcap_path, label, features = async_result.get(timeout=1)
+
+                    # 打印当前处理完成的文件
+                    pcap_name = Path(pcap_path).name
+                    tqdm.write(f"  [{label}] {pcap_name}")
+
+                    # 收集结果
+                    if label in label_data:
+                        if features.fsnet:
+                            label_data[label]["fsnet"].extend(features.fsnet)
+                        if features.df:
+                            label_data[label]["df"].extend(features.df)
+                        if features.appscanner:
+                            label_data[label]["appscanner"].extend(features.appscanner)
+                        if features.yatc:
+                            label_data[label]["yatc"].extend(features.yatc)
+
+                    # 跟踪完成数量
+                    label_done_counts[label] += 1
+
+                    # 当一个 label 完成后，立即保存并释放内存
+                    if label not in saved_labels and label_done_counts[label] >= label_task_counts[label]:
+                        save_and_release_label(label)
+                        saved_labels.add(label)
+
+                    collected += 1
+                    pbar.update(1)
+                except Exception as e:
+                    tqdm.write(f"  [错误] {task_info}: {e}")
+                    pbar.update(1)
+            else:
+                still_pending.append((async_result, task_info))
+
+        pending_results = still_pending
+        return collected
+
     with mp.Pool(processes=config.max_procs) as pool:
-        for i, (pcap_path, label, features) in enumerate(tqdm(
-            pool.imap_unordered(process_single_pcap, all_tasks, chunksize=4),
-            total=len(all_tasks),
-            desc="处理 PCAP"
-        )):
-            # 打印当前处理完成的文件
-            pcap_name = Path(pcap_path).name
-            tqdm.write(f"  [{label}] {pcap_name}")
+        while task_index < len(all_tasks) or pending_results:
+            # 检查内存，如果超限则等待现有任务完成
+            mem = psutil.virtual_memory()
+            if mem.percent / 100.0 >= config.memory_limit:
+                memory_wait_count += 1
+                tqdm.write(f"  [内存] 使用率 {mem.percent:.1f}% >= {config.memory_limit * 100:.0f}%，等待任务完成...")
 
-            # 定期检查内存使用率
-            if i > 0 and i % check_interval == 0:
-                mem = psutil.virtual_memory()
-                if mem.percent / 100.0 >= config.memory_limit:
-                    memory_wait_count += 1
-                    tqdm.write(f"  [内存] 使用率 {mem.percent:.1f}% >= {config.memory_limit * 100:.0f}%，暂停接收...")
+                # 保存已完成的 label
+                for lbl in list(label_data.keys()):
+                    if label_done_counts[lbl] >= label_task_counts[lbl] and lbl not in saved_labels:
+                        save_and_release_label(lbl)
+                        saved_labels.add(lbl)
+                gc.collect()
 
-                    # 先保存所有已完成的 label
-                    for lbl in list(label_data.keys()):
-                        if label_done_counts[lbl] >= label_task_counts[lbl] and lbl not in saved_labels:
-                            save_and_release_label(lbl)
-                            saved_labels.add(lbl)
+                # 等待所有 pending 任务完成
+                while pending_results:
+                    collect_completed()
+                    if pending_results:
+                        time.sleep(0.5)
 
-                    # 如果内存仍然超限，等待
-                    if psutil.virtual_memory().percent / 100.0 >= config.memory_limit:
-                        wait_for_memory(config.memory_limit)
-                    tqdm.write(f"  [内存] 已恢复，继续处理")
+                gc.collect()
+                tqdm.write(f"  [内存] 当前 {psutil.virtual_memory().percent:.1f}%，继续处理")
 
-            # 收集结果（只有该 label 还未保存时才收集）
-            if label in label_data:
-                if features.fsnet:
-                    label_data[label]["fsnet"].extend(features.fsnet)
-                if features.df:
-                    label_data[label]["df"].extend(features.df)
-                if features.appscanner:
-                    label_data[label]["appscanner"].extend(features.appscanner)
-                if features.yatc:
-                    label_data[label]["yatc"].extend(features.yatc)
+            # 收集已完成的结果
+            collect_completed()
 
-            # 跟踪完成数量
-            label_done_counts[label] += 1
+            # 如果 pending 任务数未达上限，且还有任务待提交，则提交新任务
+            while len(pending_results) < MAX_PENDING and task_index < len(all_tasks):
+                task = all_tasks[task_index]
+                async_result = pool.apply_async(process_single_pcap, (task,))
+                pending_results.append((async_result, task[0]))  # task[0] 是 pcap_path
+                task_index += 1
 
-            # 当一个 label 的所有任务完成后，立即保存并释放内存
-            if label not in saved_labels and label_done_counts[label] >= label_task_counts[label]:
-                save_and_release_label(label)
-                saved_labels.add(label)
+            # 如果没有新任务可提交，等待一下
+            if pending_results and task_index >= len(all_tasks):
+                time.sleep(0.1)
+            elif not pending_results and task_index >= len(all_tasks):
+                break
+            elif len(pending_results) >= MAX_PENDING:
+                time.sleep(0.1)
+
+    pbar.close()
 
     # 保存剩余未保存的 label（理论上不应该有，但以防万一）
     for label in pending_labels:
