@@ -238,6 +238,10 @@ def parse_pcap_once(pcap_path: Path, config: Config) -> Dict[tuple, List[PacketI
         if proto_str is None:
             continue
 
+        # 过滤空包（payload 为空的包）
+        if len(payload) == 0:
+            continue
+
         # 计算无向键和方向
         src_ip = ipaddress.ip_address(l3.src)
         dst_ip = ipaddress.ip_address(l3.dst)
