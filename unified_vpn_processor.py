@@ -422,24 +422,48 @@ class FlowFeatures:
     yatc: List[np.ndarray] = field(default_factory=list)
 
 
-def process_single_pcap(args: Tuple[str, str, Config]) -> Tuple[str, str, FlowFeatures]:
-    """处理单个 PCAP 文件，一次读取提取四种特征"""
+_worker_status = None  # 共享字典，记录每个进程正在处理的文件
+
+def init_worker(worker_status):
+    """初始化 worker 进程，设置共享状态"""
+    global _worker_status
+    _worker_status = worker_status
+
+
+def process_single_pcap(args: Tuple[str, str, Config]) -> Tuple[str, str, FlowFeatures, float, int, int]:
+    """处理单个 PCAP 文件，一次读取提取四种特征
+
+    Returns:
+        (pcap_path, label, features, memory_mb, flow_count, packet_count)
+    """
     pcap_path, label, config = args
 
     features = FlowFeatures()
+    memory_mb = 0.0
+    flow_count = 0
+    packet_count = 0
 
     try:
         pcap_path = Path(pcap_path)
 
+        # 更新共享状态：记录当前进程正在处理的文件
+        if _worker_status is not None:
+            pid = os.getpid()
+            _worker_status[pid] = pcap_path.name
+        proc = psutil.Process()
+
         # 跳过过小的文件
         if pcap_path.stat().st_size < config.min_pcap_size:
-            return (str(pcap_path), label, features)
+            return (str(pcap_path), label, features, memory_mb, flow_count, packet_count)
 
         # 一次性解析 PCAP
         flows = parse_pcap_once(pcap_path, config)
 
         if not flows:
-            return (str(pcap_path), label, features)
+            return (str(pcap_path), label, features, memory_mb, flow_count, packet_count)
+
+        flow_count = len(flows)
+        packet_count = sum(len(pkts) for pkts in flows.values())
 
         # 提取四种特征
         features.fsnet = extract_fsnet_features(flows, config)
@@ -447,10 +471,13 @@ def process_single_pcap(args: Tuple[str, str, Config]) -> Tuple[str, str, FlowFe
         features.appscanner = extract_appscanner_features(flows, config)
         features.yatc = extract_yatc_features(flows, config)
 
+        # 记录当前进程内存
+        memory_mb = proc.memory_info().rss / (1024 * 1024)
+
     except Exception as e:
         pass
 
-    return (str(pcap_path), label, features)
+    return (str(pcap_path), label, features, memory_mb, flow_count, packet_count)
 
 
 # ============================================================================
@@ -541,9 +568,9 @@ def main():
                         help="VPN 数据集根目录")
     parser.add_argument("--output", type=str, default="./vpn_unified_output",
                         help="输出目录")
-    parser.add_argument("--procs", type=int, default=24,
+    parser.add_argument("--procs", type=int, default=8,
                         help="并行进程数")
-    parser.add_argument("--memory_limit", type=float, default=0.7,
+    parser.add_argument("--memory_limit", type=float, default=0.6,
                         help="内存使用率阈值 (0.0-1.0，默认0.8即80%%)")
     parser.add_argument("--max_labels", type=int, default=0,
                         help="最大处理标签数（0=不限制）")
@@ -749,13 +776,52 @@ def main():
         completed_labels.add(lbl)
         save_completed_labels(completed_labels)
 
+    # 创建共享状态（用于跟踪每个进程正在处理的文件）
+    manager = mp.Manager()
+    worker_status = manager.dict()  # {pid: filename}
+
     # 流式并行处理（使用 apply_async + 主动限流）
-    pbar = tqdm(total=len(all_tasks), desc="处理 PCAP")
+    pbar = tqdm(total=len(all_tasks), desc="处理 PCAP", position=0)
 
     # 控制同时进行的任务数
     MAX_PENDING = config.max_procs  # 最多同时 pending 的任务数
     pending_results = []  # (AsyncResult, task_info) 列表
     task_index = 0
+    last_monitor_time = 0
+    MONITOR_INTERVAL = 60.0  # 每2秒更新一次进程状态
+
+    def print_worker_status(pool):
+        """打印所有 worker 进程的内存状态"""
+        try:
+            workers = pool._pool
+            lines = []
+            total_mem_gb = 0
+            for i, worker in enumerate(workers):
+                if worker.is_alive():
+                    try:
+                        proc = psutil.Process(worker.pid)
+                        mem_mb = proc.memory_info().rss / (1024 * 1024)
+                        mem_gb = mem_mb / 1024
+                        total_mem_gb += mem_gb
+                        # 从共享状态获取正在处理的文件
+                        current_file = worker_status.get(worker.pid, "-")
+                        if mem_gb >= 1:
+                            lines.append(f"  Worker {i:2d} [PID {worker.pid}]: {mem_gb:6.2f} GB | {current_file}")
+                        else:
+                            lines.append(f"  Worker {i:2d} [PID {worker.pid}]: {mem_mb:6.0f} MB | {current_file}")
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        lines.append(f"  Worker {i:2d} [PID {worker.pid}]: N/A")
+                else:
+                    lines.append(f"  Worker {i:2d}: dead")
+            if lines:
+                main_mem_gb = psutil.Process().memory_info().rss / (1024**3)
+                sys_mem = psutil.virtual_memory()
+                tqdm.write("\n" + "=" * 70)
+                tqdm.write(f"[进程状态] 主进程: {main_mem_gb:.2f} GB | Worker总计: {total_mem_gb:.2f} GB | 系统: {sys_mem.percent:.1f}%")
+                tqdm.write("\n".join(lines))
+                tqdm.write("=" * 70)
+        except Exception as e:
+            pass
 
     def collect_completed():
         """收集已完成的结果并处理"""
@@ -766,11 +832,12 @@ def main():
         for async_result, task_info in pending_results:
             if async_result.ready():
                 try:
-                    pcap_path, label, features = async_result.get(timeout=1)
+                    pcap_path, label, features, memory_mb, flow_count, packet_count = async_result.get(timeout=1)
 
-                    # 打印当前处理完成的文件
+                    # 打印当前处理完成的文件（包含内存和流信息）
                     pcap_name = Path(pcap_path).name
-                    tqdm.write(f"  [{label}] {pcap_name}")
+                    mem_str = f"{memory_mb:.0f}MB" if memory_mb > 0 else "-"
+                    tqdm.write(f"  [{label}] {pcap_name} | 流:{flow_count} 包:{packet_count} 内存:{mem_str}")
 
                     # 收集结果
                     if label in label_data:
@@ -802,8 +869,14 @@ def main():
         pending_results = still_pending
         return collected
 
-    with mp.Pool(processes=config.max_procs) as pool:
+    with mp.Pool(processes=config.max_procs, initializer=init_worker, initargs=(worker_status,)) as pool:
         while task_index < len(all_tasks) or pending_results:
+            # 定期打印进程状态
+            current_time = time.time()
+            if current_time - last_monitor_time >= MONITOR_INTERVAL:
+                print_worker_status(pool)
+                last_monitor_time = current_time
+
             # 检查内存，如果超限则等待现有任务完成
             mem = psutil.virtual_memory()
             if mem.percent / 100.0 >= config.memory_limit:
