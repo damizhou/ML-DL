@@ -22,7 +22,7 @@ from torch.amp import GradScaler, autocast
 
 # ========= 可调参数（默认即可跑） =========
 DATASET_KEY   = "iscx"
-ART_DIR       = os.path.join("artifacts", DATASET_KEY, "dirseq")
+ART_DIR       = os.path.join("../ISCXTor/artifacts", DATASET_KEY, "dirseq")
 RUN_DIR       = os.path.join("runs", "df_nodf", DATASET_KEY)
 
 SEED          = 2025

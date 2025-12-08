@@ -51,8 +51,8 @@ MAX_PROCS = 16  # 并发进程数
 
 # MFR 参数 (5包 × 320字节 = 1600字节 = 40×40)
 NUM_PACKETS = 5  # 每个流使用的数据包数
-HEADER_LEN = 40   # IP + TCP/UDP 头部
-PAYLOAD_LEN = 280  # 载荷
+HEADER_LEN = 80   # IP + TCP/UDP 头部（与 pcap_to_mfr.py 一致）
+PAYLOAD_LEN = 240  # 载荷（与 pcap_to_mfr.py 一致）
 BYTES_PER_PACKET = HEADER_LEN + PAYLOAD_LEN  # 320 字节
 TOTAL_BYTES = NUM_PACKETS * BYTES_PER_PACKET  # 1600 字节
 IMAGE_SIZE = 40  # 40×40 图像

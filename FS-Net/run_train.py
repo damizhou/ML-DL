@@ -21,7 +21,7 @@ from engine import train_one_epoch, evaluate, save_checkpoint, load_checkpoint
 # Configuration - Hardcoded Parameters
 # =============================================================================
 
-# Data (pickle file from iscx_processor.py)
+# Data (pickle file from iscx_vpn_processor.py)
 DATA_PATH = "/home/pcz/DL/ML&DL/FS-Net/data/iscxvpn/iscxvpn_fsnet.pkl"
 NUM_CLASSES = 12          # ISCX: 12 classes
 

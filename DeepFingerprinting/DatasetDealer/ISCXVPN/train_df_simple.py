@@ -36,10 +36,10 @@ from Model_NoDef_pytorch import DFNoDefNet
 # 基本常量（保持很少很直观）
 # =====================
 DATASET_KEY = "iscx"                     # 数据集键名：决定读取的目录
-ART_DIR     = os.path.join("artifacts",  # 根目录（按你的工程习惯）
-    DATASET_KEY,
+ART_DIR     = os.path.join("../ISCXTor/artifacts",  # 根目录（按你的工程习惯）
+                           DATASET_KEY,
     "dirseq",
-)
+                           )
 EPOCHS      = 30                          # 训练轮数（可按需改大/改小）
 BATCH_SIZE  = 1024                        # 批大小（视显存调整）
 MAX_LEN     = 5000                        # 每条样本的统一长度（右侧零填充或截断）

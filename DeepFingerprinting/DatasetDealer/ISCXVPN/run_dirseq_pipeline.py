@@ -68,7 +68,7 @@ def main():
     print("──────────────────────── build_dirseq_dataset → data.npz ───────────────────────────")
     build.main()
 
-    out_dir = Path("artifacts") / DATASET_KEY / "dirseq"
+    out_dir = Path("../ISCXTor/artifacts") / DATASET_KEY / "dirseq"
     print(f"\n[OK] 全流程完成，产物目录：{out_dir.resolve()}")
 
 if __name__ == "__main__":

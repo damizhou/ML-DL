@@ -568,9 +568,9 @@ def main():
                         help="VPN 数据集根目录")
     parser.add_argument("--output", type=str, default="./vpn_unified_output",
                         help="输出目录")
-    parser.add_argument("--procs", type=int, default=8,
+    parser.add_argument("--procs", type=int, default=16,
                         help="并行进程数")
-    parser.add_argument("--memory_limit", type=float, default=0.6,
+    parser.add_argument("--memory_limit", type=float, default=0.7,
                         help="内存使用率阈值 (0.0-1.0，默认0.8即80%%)")
     parser.add_argument("--max_labels", type=int, default=0,
                         help="最大处理标签数（0=不限制）")
@@ -788,7 +788,7 @@ def main():
     pending_results = []  # (AsyncResult, task_info) 列表
     task_index = 0
     last_monitor_time = 0
-    MONITOR_INTERVAL = 60.0  # 每2秒更新一次进程状态
+    MONITOR_INTERVAL = 20.0  # 每2秒更新一次进程状态
 
     def print_worker_status(pool):
         """打印所有 worker 进程的内存状态"""
@@ -869,7 +869,7 @@ def main():
         pending_results = still_pending
         return collected
 
-    with mp.Pool(processes=config.max_procs, initializer=init_worker, initargs=(worker_status,)) as pool:
+    with mp.Pool(processes=config.max_procs, initializer=init_worker, initargs=(worker_status,), maxtasksperchild=1) as pool:
         while task_index < len(all_tasks) or pending_results:
             # 定期打印进程状态
             current_time = time.time()

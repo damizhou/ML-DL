@@ -646,7 +646,7 @@ def load_dataset(load_path: str) -> Tuple[np.ndarray, np.ndarray, Dict[int, str]
         labels = data['labels']
         label_map = data['label_map']
     elif 'train_features' in data:
-        # New format from iscxvpn_processor.py - combine all splits
+        # New format from iscx_vpn_processor.py - combine all splits
         parts_features = [data['train_features']]
         parts_labels = [data['train_labels']]
 

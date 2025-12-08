@@ -1,0 +1,17 @@
+service_id,service
+0,nontor-browsing
+1,nontor-chat
+2,nontor-voip
+3,nontor-video
+4,nontor-audio
+5,nontor-ft
+6,nontor-email
+7,nontor-p2p
+8,tor-browsing
+9,tor-chat
+10,tor-voip
+11,tor-video
+12,tor-audio
+13,tor-ft
+14,tor-email
+15,tor-p2p

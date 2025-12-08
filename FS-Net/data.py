@@ -419,7 +419,7 @@ def get_dataset_info(data_path: Union[str, Path]) -> Dict:
 
 
 # =============================================================================
-# Pickle Dataset Support (new format from iscx_processor.py)
+# Pickle Dataset Support (new format from iscx_vpn_processor.py)
 # =============================================================================
 
 import pickle

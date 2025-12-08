@@ -44,7 +44,7 @@ FS-Net/
 ### 1. 数据准备
 ```bash
 # 将 PCAP 数据转换为 pickle 格式
-python iscx_processor.py
+python iscx_vpn_processor.py
 # 输出: data/iscxvpn/iscxvpn_fsnet.pkl
 ```
 
