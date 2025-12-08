@@ -21,7 +21,7 @@ from typing import List, Tuple, Optional, Dict
 from collections import Counter
 
 # ===== 固定数据集根目录 =====
-DATASET_ROOT = "/netdisk/dataset/public_dataset/ISCX-VPN-NonVPN-2016"
+DATASET_ROOT = "/home/pcz/DL/ML&DL/public_dataset/ISCX-VPN-NonVPN-2016"
 
 # ===== 产物与扫描参数 =====
 DATASET_KEY = "iscx"
@@ -189,7 +189,7 @@ def main() -> None:
         sid, _ = r
         mapped.append((path, sid))
 
-    out_dir = os.path.join("../ISCXTor/artifacts", DATASET_KEY)
+    out_dir = os.path.join("../ISCXVPN/artifacts", DATASET_KEY)
     out_csv = os.path.join(out_dir, "label_map.csv")
     vocab_csv = os.path.join(out_dir, "service_vocab.csv")
     ensure_dir_for_file(out_csv)
