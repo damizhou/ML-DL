@@ -46,8 +46,13 @@ from engine import (
 # 配置
 # =============================================================================
 
-# 数据路径 (当前模型目录下的 vpn_data)
-DATA_DIR = Path(__file__).parent / "vpn_unified_output"
+# 数据路径
+DATA_ROOT = Path(__file__).parent / "data"
+AVAILABLE_DATASETS = {
+    "iscxvpn": DATA_ROOT / "iscxvpn",
+    "vpn_unified": DATA_ROOT / "vpn_unified_output",
+}
+DEFAULT_DATASET = "iscxvpn"
 
 # 输出目录
 OUTPUT_DIR = Path(__file__).parent / "checkpoints"
@@ -62,10 +67,14 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 def pretrain(args):
     """运行 MAE 预训练"""
+    # 解析数据目录
+    data_dir = AVAILABLE_DATASETS.get(args.data, AVAILABLE_DATASETS[DEFAULT_DATASET])
+
     print("=" * 60)
     print("YaTC VPN Pre-training (MAE)")
     print("=" * 60)
-    print(f"Data: {DATA_DIR}")
+    print(f"Dataset: {args.data}")
+    print(f"Data path: {data_dir}")
     print(f"Device: {DEVICE}")
     print(f"Batch size: {args.batch_size}")
     print(f"Learning rate: {args.lr}")
@@ -93,7 +102,7 @@ def pretrain(args):
 
     # 创建数据加载器
     dataloader = build_npz_pretrain_dataloader(
-        DATA_DIR,
+        data_dir,
         batch_size=args.batch_size,
         num_workers=0,
         shuffle=True
@@ -157,6 +166,9 @@ def pretrain(args):
 
 def finetune(args):
     """运行微调"""
+    # 解析数据目录
+    data_dir = AVAILABLE_DATASETS.get(args.data, AVAILABLE_DATASETS[DEFAULT_DATASET])
+
     # 创建输出目录
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -164,7 +176,7 @@ def finetune(args):
 
     # 创建数据加载器（分层划分，剔除样本不足的类别）
     train_loader, num_classes = build_npz_finetune_dataloader(
-        DATA_DIR,
+        data_dir,
         split='train',
         batch_size=args.batch_size,
         num_workers=0,
@@ -174,7 +186,7 @@ def finetune(args):
         min_samples=10
     )
     val_loader, _ = build_npz_finetune_dataloader(
-        DATA_DIR,
+        data_dir,
         split='val',
         batch_size=args.batch_size,
         num_workers=0,
@@ -184,7 +196,7 @@ def finetune(args):
         min_samples=10
     )
     test_loader, _ = build_npz_finetune_dataloader(
-        DATA_DIR,
+        data_dir,
         split='test',
         batch_size=args.batch_size,
         num_workers=0,
@@ -197,7 +209,8 @@ def finetune(args):
     print("=" * 60)
     print("YaTC VPN Fine-tuning")
     print("=" * 60)
-    print(f"Data: {DATA_DIR}")
+    print(f"Dataset: {args.data}")
+    print(f"Data path: {data_dir}")
     print(f"Device: {DEVICE}")
     print(f"Num classes: {num_classes}")
     print(f"Train samples: {len(train_loader.dataset)}")
@@ -335,8 +348,14 @@ def main():
     parser = argparse.ArgumentParser(description='YaTC VPN Training')
     subparsers = parser.add_subparsers(dest='mode', help='Training mode')
 
+    # 数据集选项
+    data_choices = list(AVAILABLE_DATASETS.keys())
+
     # 预训练参数
     pretrain_parser = subparsers.add_parser('pretrain', help='MAE pre-training')
+    pretrain_parser.add_argument('--data', type=str, default=DEFAULT_DATASET,
+                                  choices=data_choices,
+                                  help=f'Dataset to use (default: {DEFAULT_DATASET})')
     pretrain_parser.add_argument('--batch_size', type=int, default=128)
     pretrain_parser.add_argument('--lr', type=float, default=1e-3)
     pretrain_parser.add_argument('--steps', type=int, default=50000)
@@ -345,6 +364,9 @@ def main():
 
     # 微调参数
     finetune_parser = subparsers.add_parser('finetune', help='Fine-tuning')
+    finetune_parser.add_argument('--data', type=str, default=DEFAULT_DATASET,
+                                  choices=data_choices,
+                                  help=f'Dataset to use (default: {DEFAULT_DATASET})')
     finetune_parser.add_argument('--pretrained', type=str, default=None,
                                   help='Path to pre-trained model')
     finetune_parser.add_argument('--batch_size', type=int, default=128)
@@ -359,8 +381,12 @@ def main():
         finetune(args)
     else:
         print("Usage:")
-        print("  python train_vpn.py pretrain [--batch_size 128] [--steps 50000]")
-        print("  python train_vpn.py finetune [--pretrained path/to/model.pth] [--epochs 100]")
+        print("  python train_vpn.py pretrain [--data iscxvpn|vpn_unified] [--steps 50000]")
+        print("  python train_vpn.py finetune [--data iscxvpn|vpn_unified] [--pretrained model.pth]")
+        print("")
+        print("Available datasets:")
+        for name, path in AVAILABLE_DATASETS.items():
+            print(f"  {name}: {path}")
 
 
 if __name__ == "__main__":

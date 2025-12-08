@@ -632,7 +632,7 @@ def main():
         "fsnet": project_root / "FS-Net" / output_subdir,
         "deepfingerprinting": project_root / "DeepFingerprinting" / output_subdir,
         "appscanner": project_root / "AppScanner" / output_subdir,
-        "yatc": project_root / "YaTC" / output_subdir,
+        "yatc": project_root / "YaTC" / "data" / "vpn_unified_output",
     }
 
     # 创建各模型输出目录

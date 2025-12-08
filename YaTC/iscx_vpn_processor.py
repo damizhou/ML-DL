@@ -44,7 +44,7 @@ LABEL_MAP_PATH = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/ISCXVPN/ar
 VOCAB_PATH = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/ISCXVPN/artifacts/iscx/service_vocab.csv"
 
 # Output path
-OUTPUT_DIR = "/home/pcz/DL/ML&DL/YaTC/data/iscxvpn"
+OUTPUT_DIR = Path(__file__).resolve().parent / "data" / "iscxvpn"
 
 # MFR parameters (5 packets × 320 bytes = 1600 bytes = 40×40)
 NUM_PACKETS = 5           # Number of packets per flow
