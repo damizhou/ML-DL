@@ -40,11 +40,11 @@ except ImportError:
 # =============================================================================
 
 # Input paths
-LABEL_MAP_PATH = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/ISCXVPN/artifacts/iscx/label_map.csv"
-VOCAB_PATH = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/ISCXVPN/artifacts/iscx/service_vocab.csv"
+LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/ISCXVPN/artifacts/iscx/label_map.csv"
+VOCAB_PATH = "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/ISCXVPN/artifacts/iscx/service_vocab.csv"
 
 # Output path
-OUTPUT_DIR = "/home/pcz/DL/ML&DL/AppScanner/data/iscxvpn"
+OUTPUT_DIR = "/home/pcz/DL/ML_DL/AppScanner/data/iscxvpn"
 
 # Flow extraction parameters
 MIN_PACKETS = 7           # Minimum packets per flow (AppScanner default)

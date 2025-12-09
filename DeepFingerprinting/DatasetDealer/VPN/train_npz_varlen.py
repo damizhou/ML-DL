@@ -333,10 +333,10 @@ def main():
     
     # Data arguments
     parser.add_argument('--npz_root', type=str, 
-                        default='/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz',
+                        default='/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/npz',
                         help='Root directory containing NPZ files')
     parser.add_argument('--labels_json', type=str,
-                        default='/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/labels.json',
+                        default='/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/labels.json',
                         help='Path to labels.json file')
     parser.add_argument('--output_dir', type=str, default='./runs',
                         help='Directory to save checkpoints and logs')

@@ -79,7 +79,7 @@ def invert_mapping(label2id: Dict[str, int]) -> Dict[str, str]:
     return {str(v): k for k, v in label2id.items()}
 
 def main():
-    root = Path(r"/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/NOVPN/novpn_npz_longflows_all")
+    root = Path(r"/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/NOVPN/novpn_npz_longflows_all")
     out  = root / "labels.json"
     out.parent.mkdir(parents=True, exist_ok=True)
 

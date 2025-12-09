@@ -40,11 +40,11 @@ except ImportError:
 # =============================================================================
 
 # Input paths
-LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-Tor-NonTor-2017/label_map.csv"
-VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-Tor-NonTor-2017/service_vocab.csv"
+LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/USTC-TFC2016/label_map.csv"
+VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/USTC-TFC2016/service_vocab.csv"
 
 # Output path
-OUTPUT_DIR = "/home/pcz/DL/ML_DL/AppScanner/data/iscxtor"
+OUTPUT_DIR = "/home/pcz/DL/ML_DL/AppScanner/data/ustc"
 
 # Flow extraction parameters
 MIN_PACKETS = 7           # Minimum packets per flow (AppScanner default)

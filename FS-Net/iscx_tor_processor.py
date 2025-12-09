@@ -42,11 +42,11 @@ except ImportError:
 # =============================================================================
 
 # Input paths
-LABEL_MAP_PATH = "/home/pcz/DL/ML&DL/public_dataset/ISCX-Tor-NonTor-2017/label_map.csv"
-VOCAB_PATH = "/home/pcz/DL/ML&DL/public_dataset/ISCX-Tor-NonTor-2017/service_vocab.csv"
+LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-Tor-NonTor-2017/label_map.csv"
+VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-Tor-NonTor-2017/service_vocab.csv"
 
 # Output path
-OUTPUT_DIR = "/home/pcz/DL/ML&DL/FS-Net/data/iscxtor"
+OUTPUT_DIR = "/home/pcz/DL/ML_DL/FS-Net/data/iscxtor"
 
 # Flow extraction parameters
 MIN_PACKETS = 10          # Minimum packets per flow

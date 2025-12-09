@@ -39,12 +39,12 @@ except ImportError:
 # Configuration
 # =============================================================================
 
-# Input paths (same as AppScanner)
-LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/ISCXVPN/artifacts/iscx/label_map.csv"
-VOCAB_PATH = "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/ISCXVPN/artifacts/iscx/service_vocab.csv"
+# Input paths
+LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-Tor-NonTor-2017/label_map.csv"
+VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-Tor-NonTor-2017/service_vocab.csv"
 
 # Output path
-OUTPUT_DIR = Path(__file__).resolve().parent / "data" / "iscxvpn"
+OUTPUT_DIR = Path(__file__).resolve().parent / "data" / "iscxtor"
 
 # MFR parameters (5 packets × 320 bytes = 1600 bytes = 40×40)
 NUM_PACKETS = 5           # Number of packets per flow

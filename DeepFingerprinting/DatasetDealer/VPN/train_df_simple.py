@@ -32,14 +32,14 @@ if hasattr(torch.backends.cudnn, 'allow_tf32'):
 EPOCHS          = 30
 BATCH_SIZE      = 512
 MAX_LEN         = 5000
-MULTI_NPZ_ROOT  = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_little"
+MULTI_NPZ_ROOT  = "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_little"
 NUM_WORKERS     = 8
 NPZ_CACHE_FILES = 20000
-LABELS_JSON     = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_little/npz_longflows_little.json"
+LABELS_JSON     = "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_little/npz_longflows_little.json"
 
 
-# NPZ_ROOT: str = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_little"
-# LABELS_JSON: str = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_little/npz_longflows_little.json"
+# NPZ_ROOT: str = "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_little"
+# LABELS_JSON: str = "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_little/npz_longflows_little.json"
 
 # —— 导入你的 DF 模型（保持工程结构）——
 ROOT = Path(__file__).resolve().parents[2]  # .../DeepFingerprinting

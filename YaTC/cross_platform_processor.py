@@ -40,11 +40,11 @@ except ImportError:
 # =============================================================================
 
 # Input paths (same as AppScanner)
-LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/ISCXVPN/artifacts/iscx/label_map.csv"
-VOCAB_PATH = "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/ISCXVPN/artifacts/iscx/service_vocab.csv"
+LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/Cross-Platform/label_map.csv"
+VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/Cross-Platform/app_vocab.csv"
 
 # Output path
-OUTPUT_DIR = Path(__file__).resolve().parent / "data" / "iscxvpn"
+OUTPUT_DIR = Path(__file__).resolve().parent / "data" / "cross_platform"
 
 # MFR parameters (5 packets × 320 bytes = 1600 bytes = 40×40)
 NUM_PACKETS = 5           # Number of packets per flow
@@ -430,7 +430,7 @@ def load_vocab(csv_path: str) -> Dict[int, str]:
     with open(csv_path, 'r') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            vocab[int(row['service_id'])] = row['service']
+            vocab[int(row['app_id'])] = row['app_name']
     return vocab
 
 

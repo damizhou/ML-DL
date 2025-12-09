@@ -22,7 +22,7 @@ from engine import train_one_epoch, evaluate, save_checkpoint, load_checkpoint
 # =============================================================================
 
 # Data (pickle file from iscx_vpn_processor.py)
-DATA_PATH = "/home/pcz/DL/ML&DL/FS-Net/data/iscxvpn/iscxvpn_fsnet.pkl"
+DATA_PATH = "/home/pcz/DL/ML_DL/FS-Net/data/iscxvpn/iscxvpn_fsnet.pkl"
 NUM_CLASSES = 12          # ISCX: 12 classes
 
 # Model (Paper parameters: Section V-B-2)
@@ -48,7 +48,7 @@ VAL_RATIO = 0.1
 TEST_RATIO = 0.1
 
 # Output
-OUTPUT_DIR = "/home/pcz/DL/ML&DL/FS-Net/checkpoints"
+OUTPUT_DIR = "/home/pcz/DL/ML_DL/FS-Net/checkpoints"
 
 # Device
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

@@ -32,8 +32,8 @@ from Model_NoDef_pytorch import DFNoDefNet  # noqa: E402
 # ====== Global Params =====
 # =========================
 # Paths
-NPZ_ROOT: str = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows"
-LABELS_JSON: str = "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_labels.json"
+NPZ_ROOT: str = "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows"
+LABELS_JSON: str = "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/npz_longflows_labels.json"
 RUNS_DIR: str = "./runs/df_npz"
 SAVE_BEST_PATH: str = str(Path(RUNS_DIR, "best.pt"))
 LOG_INTERVAL_STEPS: int = 200  # print every X optimizer steps

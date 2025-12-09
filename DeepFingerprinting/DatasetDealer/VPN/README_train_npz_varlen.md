@@ -51,8 +51,8 @@ python train_npz_varlen.py \
 
 ```bash
 python train_npz_varlen.py \
-  --npz_root /home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz \
-  --labels_json /home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/labels.json \
+  --npz_root /home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/npz \
+  --labels_json /home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/labels.json \
   --output_dir ./runs/vpn_experiment \
   --max_len 5000 \
   --epochs 20 \
@@ -89,8 +89,8 @@ python train_npz_varlen.py \
 ## Command-Line Arguments
 
 ### Data Arguments
-- `--npz_root`: Root directory containing NPZ files (default: `/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz`)
-- `--labels_json`: Path to labels.json file (default: `/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/labels.json`)
+- `--npz_root`: Root directory containing NPZ files (default: `/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/npz`)
+- `--labels_json`: Path to labels.json file (default: `/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/labels.json`)
 - `--output_dir`: Directory to save checkpoints and logs (default: `./runs`)
 
 ### Model Arguments

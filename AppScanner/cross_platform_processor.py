@@ -40,11 +40,11 @@ except ImportError:
 # =============================================================================
 
 # Input paths
-LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-Tor-NonTor-2017/label_map.csv"
-VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-Tor-NonTor-2017/service_vocab.csv"
+LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/Cross-Platform/label_map.csv"
+VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/Cross-Platform/app_vocab.csv"
 
 # Output path
-OUTPUT_DIR = "/home/pcz/DL/ML_DL/AppScanner/data/iscxtor"
+OUTPUT_DIR = "/home/pcz/DL/ML_DL/AppScanner/data/cross_platform"
 
 # Flow extraction parameters
 MIN_PACKETS = 7           # Minimum packets per flow (AppScanner default)
@@ -371,12 +371,12 @@ def load_label_map(csv_path: str) -> List[Tuple[str, int]]:
 
 
 def load_vocab(csv_path: str) -> Dict[int, str]:
-    """Load service vocabulary from CSV."""
+    """Load app_id vocabulary from CSV."""
     vocab = {}
     with open(csv_path, 'r') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            vocab[int(row['service_id'])] = row['service']
+            vocab[int(row['app_id'])] = row['app_name']
     return vocab
 
 

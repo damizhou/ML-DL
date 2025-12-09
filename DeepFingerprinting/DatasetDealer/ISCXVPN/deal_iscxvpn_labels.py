@@ -21,7 +21,7 @@ from typing import List, Tuple, Optional, Dict
 from collections import Counter
 
 # ===== 固定数据集根目录 =====
-DATASET_ROOT = "/home/pcz/DL/ML&DL/public_dataset/ISCX-VPN-NonVPN-2016"
+DATASET_ROOT = "/home/pcz/DL/ML_DL/public_dataset/ISCX-VPN-NonVPN-2016"
 
 # ===== 产物与扫描参数 =====
 DATASET_KEY = "iscx"

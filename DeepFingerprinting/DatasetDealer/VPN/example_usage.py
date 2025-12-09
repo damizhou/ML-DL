@@ -22,8 +22,8 @@ def run_training_example():
     
     cmd = [
         "python3", "train_npz_varlen.py",
-        "--npz_root", "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz",
-        "--labels_json", "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/labels.json",
+        "--npz_root", "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/npz",
+        "--labels_json", "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/labels.json",
         "--output_dir", "./runs/basic_experiment",
         "--epochs", "20",
         "--batch_size", "128",
@@ -51,8 +51,8 @@ def run_gpu_optimized_example():
     
     cmd = [
         "python3", "train_npz_varlen.py",
-        "--npz_root", "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz",
-        "--labels_json", "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/labels.json",
+        "--npz_root", "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/npz",
+        "--labels_json", "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/labels.json",
         "--output_dir", "./runs/gpu_experiment",
         "--epochs", "50",
         "--batch_size", "256",
@@ -84,8 +84,8 @@ def run_memory_efficient_example():
     
     cmd = [
         "python3", "train_npz_varlen.py",
-        "--npz_root", "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz",
-        "--labels_json", "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/labels.json",
+        "--npz_root", "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/npz",
+        "--labels_json", "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/labels.json",
         "--output_dir", "./runs/memory_efficient",
         "--epochs", "30",
         "--batch_size", "64",
@@ -116,8 +116,8 @@ def run_resume_example():
     
     cmd = [
         "python3", "train_npz_varlen.py",
-        "--npz_root", "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/npz",
-        "--labels_json", "/home/pcz/DL/ML&DL/DeepFingerprinting/DatasetDealer/VPN/labels.json",
+        "--npz_root", "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/npz",
+        "--labels_json", "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/VPN/labels.json",
         "--output_dir", "./runs/resumed_experiment",
         "--resume", "./runs/resumed_experiment/last.pt",
         "--epochs", "100",

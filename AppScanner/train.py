@@ -44,7 +44,7 @@ class TrainArgs:
     # Data paths
     data_dir: str = './data'                    # Directory with PCAP files
     csv_path: Optional[str] = None              # CSV file with features
-    features_path: str = '/home/pcz/DL/ML&DL/AppScanner/data/iscxvpn/iscxvpn_appscanner.pkl'  # Pre-extracted features
+    features_path: str = '/home/pcz/DL/ML_DL/AppScanner/data/iscxvpn/iscxvpn_appscanner.pkl'  # Pre-extracted features
 
     # Model configuration
     model_type: str = 'nn'                      # 'nn', 'deep', or 'rf'
