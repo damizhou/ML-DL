@@ -473,12 +473,12 @@ def process_iscxvpn_dataset():
         'num_features': 54,
     }
 
-    pickle_path = output_path / 'iscxvpn_appscanner.pkl'
+    pickle_path = output_path / 'ustc_appscanner.pkl'
     with open(pickle_path, 'wb') as f:
         pickle.dump(data, f)
 
     # Also save as npz for convenience
-    npz_path = output_path / 'iscxvpn_appscanner.npz'
+    npz_path = output_path / 'ustc_appscanner.npz'
     np.savez(
         npz_path,
         features=features,

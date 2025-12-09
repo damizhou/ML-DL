@@ -388,7 +388,7 @@ def process_iscx_dataset():
         'min_packets': MIN_PACKETS,
     }
 
-    pickle_path = output_path / 'iscxvpn_fsnet.pkl'
+    pickle_path = output_path / 'ustc_fsnet.pkl'
     with open(pickle_path, 'wb') as f:
         pickle.dump(data, f)
 
