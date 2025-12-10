@@ -8,6 +8,7 @@ Training and evaluation utilities for FS-Net:
 """
 
 import time
+import logging
 from typing import Dict, Tuple, Optional, List
 
 import torch
@@ -16,6 +17,11 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from config import DEFAULT_TRAIN_CONFIG, TrainConfig
+
+
+def log(message: str = ""):
+    """Log message using configured logger."""
+    logging.info(message)
 
 
 class AverageMeter:
@@ -99,11 +105,9 @@ def train_one_epoch(
 
         # Print progress
         if (batch_idx + 1) % print_freq == 0:
-            print(
-                f"Epoch [{epoch}] Batch [{batch_idx + 1}/{len(dataloader)}] "
+            log(f"Epoch [{epoch}] Batch [{batch_idx + 1}/{len(dataloader)}] "
                 f"Loss: {loss_meter.avg:.4f} (C: {class_loss_meter.avg:.4f}, "
-                f"R: {recon_loss_meter.avg:.4f}) Acc: {acc_meter.avg:.4f}"
-            )
+                f"R: {recon_loss_meter.avg:.4f}) Acc: {acc_meter.avg:.4f}")
 
     elapsed = time.time() - start_time
 
@@ -278,7 +282,7 @@ def save_checkpoint(
         'metrics': metrics
     }
     torch.save(checkpoint, path)
-    print(f"Saved checkpoint to {path}")
+    log(f"Saved checkpoint to {path}")
 
 
 def load_checkpoint(
@@ -311,7 +315,7 @@ def load_checkpoint(
     epoch = checkpoint.get('epoch', 0)
     metrics = checkpoint.get('metrics', {})
 
-    print(f"Loaded checkpoint from {path} (epoch {epoch})")
+    log(f"Loaded checkpoint from {path} (epoch {epoch})")
 
     return model, epoch, metrics
 

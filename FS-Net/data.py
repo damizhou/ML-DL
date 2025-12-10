@@ -23,12 +23,18 @@ from torch.nn.utils.rnn import pad_sequence
 
 from config import DEFAULT_DATA_CONFIG, DataConfig
 
+import logging
+
+def log(message: str = ""):
+    """Log message using configured logger."""
+    logging.info(message)
+
 try:
     import dpkt
     DPKT_AVAILABLE = True
 except ImportError:
     DPKT_AVAILABLE = False
-    print("Warning: dpkt not installed. PCAP processing will not be available.")
+    log("Warning: dpkt not installed. PCAP processing will not be available.")
 
 try:
     from tqdm import tqdm
@@ -105,7 +111,7 @@ def extract_packet_lengths(pcap_path: str, config: DataConfig = None) -> List[in
                     break
 
     except Exception as e:
-        print(f"Error reading {pcap_path}: {e}")
+        log(f"Error reading {pcap_path}: {e}")
         return []
 
     return lengths
@@ -359,7 +365,7 @@ def pcap_to_sequences(
 
     # Find all PCAP files
     pcap_files = list(input_path.rglob('*.pcap'))
-    print(f"Found {len(pcap_files)} PCAP files")
+    log(f"Found {len(pcap_files)} PCAP files")
 
     for pcap_file in tqdm(pcap_files, desc="Converting"):
         # Compute relative path
@@ -377,7 +383,7 @@ def pcap_to_sequences(
             with open(out_file, 'w') as f:
                 json.dump({'lengths': lengths}, f)
 
-    print(f"Converted to {output_path}")
+    log(f"Converted to {output_path}")
 
 
 def get_dataset_info(data_path: Union[str, Path]) -> Dict:
@@ -577,9 +583,9 @@ def create_dataloaders(
         pin_memory=True
     )
 
-    print(f"Dataset split (8:1:1):")
-    print(f"  Train: {len(train_dataset)} samples")
-    print(f"  Val:   {len(val_dataset)} samples")
-    print(f"  Test:  {len(test_dataset)} samples")
+    log(f"Dataset split (8:1:1):")
+    log(f"  Train: {len(train_dataset)} samples")
+    log(f"  Val:   {len(val_dataset)} samples")
+    log(f"  Test:  {len(test_dataset)} samples")
 
     return train_loader, val_loader, test_loader
