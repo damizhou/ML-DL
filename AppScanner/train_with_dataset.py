@@ -43,7 +43,7 @@ def setup_logging(output_dir: str) -> str:
     # File handler
     file_handler = logging.FileHandler(log_path, encoding='utf-8')
     file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+    file_handler.setFormatter(logging.Formatter('%(message)s'))
 
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)

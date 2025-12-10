@@ -9,6 +9,7 @@ This module provides training and evaluation functionality for AppScanner.
 
 import os
 import time
+import logging
 import numpy as np
 import torch
 import torch.nn as nn
@@ -24,6 +25,11 @@ from sklearn.metrics import (
     confusion_matrix,
     classification_report,
 )
+
+
+def log(message: str = ""):
+    """Log message using configured logger."""
+    logging.info(message)
 
 
 @dataclass
@@ -287,10 +293,10 @@ def train(
     best_val_acc = 0.0
     best_model_path = os.path.join(save_dir, 'best_model.pth')
 
-    print(f"Training AppScanner on {device}")
-    print(f"Training samples: {len(train_loader.dataset)}")
-    print(f"Validation samples: {len(val_loader.dataset)}")
-    print("-" * 60)
+    log(f"Training AppScanner on {device}")
+    log(f"Training samples: {len(train_loader.dataset)}")
+    log(f"Validation samples: {len(val_loader.dataset)}")
+    log("-" * 60)
 
     for epoch in range(config.epochs):
         start_time = time.time()
@@ -329,14 +335,14 @@ def train(
 
         # Print progress
         elapsed = time.time() - start_time
-        print(f"Epoch {epoch+1:3d}/{config.epochs} | "
-              f"Loss: {train_metrics.loss:.4f} | "
-              f"Train Acc: {train_metrics.accuracy:.4f} | "
-              f"Val Acc: {val_metrics.accuracy:.4f} | "
-              f"Conf Acc: {val_metrics.confidence_accuracy:.4f} "
-              f"({val_metrics.confidence_ratio:.1%}) | "
-              f"LR: {train_metrics.learning_rate:.6f} | "
-              f"Time: {elapsed:.1f}s")
+        log(f"Epoch {epoch+1:3d}/{config.epochs} | "
+            f"Loss: {train_metrics.loss:.4f} | "
+            f"Train Acc: {train_metrics.accuracy:.4f} | "
+            f"Val Acc: {val_metrics.accuracy:.4f} | "
+            f"Conf Acc: {val_metrics.confidence_accuracy:.4f} "
+            f"({val_metrics.confidence_ratio:.1%}) | "
+            f"LR: {train_metrics.learning_rate:.6f} | "
+            f"Time: {elapsed:.1f}s")
 
         # Early stopping disabled - run all epochs
         # if early_stopping(val_metrics.accuracy):
@@ -347,8 +353,8 @@ def train(
     checkpoint = torch.load(best_model_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
 
-    print("-" * 60)
-    print(f"Training complete. Best validation accuracy: {best_val_acc:.4f}")
+    log("-" * 60)
+    log(f"Training complete. Best validation accuracy: {best_val_acc:.4f}")
 
     return model, history
 
@@ -403,18 +409,18 @@ def test(
     )
 
     # Print report
-    print("\n" + "=" * 60)
-    print("TEST RESULTS")
-    print("=" * 60)
-    print(f"Overall Accuracy:     {metrics.accuracy:.4f}")
-    print(f"Precision (weighted): {metrics.precision:.4f}")
-    print(f"Recall (weighted):    {metrics.recall:.4f}")
-    print(f"F1 Score (weighted):  {metrics.f1:.4f}")
-    print("-" * 60)
-    print(f"Confidence Threshold: {prediction_threshold}")
-    print(f"Confident Predictions: {metrics.confidence_ratio:.1%}")
-    print(f"Confidence Accuracy:  {metrics.confidence_accuracy:.4f}")
-    print("-" * 60)
+    log("\n" + "=" * 60)
+    log("TEST RESULTS")
+    log("=" * 60)
+    log(f"Overall Accuracy:     {metrics.accuracy:.4f}")
+    log(f"Precision (weighted): {metrics.precision:.4f}")
+    log(f"Recall (weighted):    {metrics.recall:.4f}")
+    log(f"F1 Score (weighted):  {metrics.f1:.4f}")
+    log("-" * 60)
+    log(f"Confidence Threshold: {prediction_threshold}")
+    log(f"Confident Predictions: {metrics.confidence_ratio:.1%}")
+    log(f"Confidence Accuracy:  {metrics.confidence_accuracy:.4f}")
+    log("-" * 60)
 
     # Classification report
     if label_map is not None:
@@ -428,8 +434,8 @@ def test(
         target_names=target_names,
         zero_division=0,
     )
-    print("\nClassification Report:")
-    print(report)
+    log("\nClassification Report:")
+    log(report)
 
     return metrics
 
@@ -458,7 +464,7 @@ def train_random_forest(
     """
     from models import AppScannerRF
 
-    print("Training Random Forest classifier...")
+    log("Training Random Forest classifier...")
     rf = AppScannerRF(n_estimators=n_estimators)
     rf.fit(X_train, y_train)
 
@@ -475,14 +481,14 @@ def train_random_forest(
     ) if confident_mask.sum() > 0 else 0.0
     confidence_ratio = confident_mask.sum() / len(confident_mask)
 
-    print(f"Random Forest Results:")
-    print(f"  Overall Accuracy: {accuracy:.4f}")
-    print(f"  Confidence Accuracy: {confidence_accuracy:.4f} ({confidence_ratio:.1%})")
+    log(f"Random Forest Results:")
+    log(f"  Overall Accuracy: {accuracy:.4f}")
+    log(f"  Confidence Accuracy: {confidence_accuracy:.4f} ({confidence_ratio:.1%})")
 
     # Feature importance
     importance = rf.feature_importance()
     top_features = np.argsort(importance)[::-1][:10]
-    print(f"  Top 10 features: {top_features}")
+    log(f"  Top 10 features: {top_features}")
 
     return {
         'model': rf,
@@ -518,9 +524,9 @@ def compare_approaches(
     results = {}
 
     # 1. Neural Network
-    print("\n" + "=" * 40)
-    print("Approach: Neural Network")
-    print("=" * 40)
+    log("\n" + "=" * 40)
+    log("Approach: Neural Network")
+    log("=" * 40)
 
     from data import create_dataloaders
     total_samples = len(X_train) + len(X_test)
@@ -552,9 +558,9 @@ def compare_approaches(
     }
 
     # 2. Random Forest
-    print("\n" + "=" * 40)
-    print("Approach: Random Forest")
-    print("=" * 40)
+    log("\n" + "=" * 40)
+    log("Approach: Random Forest")
+    log("=" * 40)
 
     rf_results = train_random_forest(
         X_train, y_train, X_test, y_test,
@@ -568,12 +574,12 @@ def compare_approaches(
     }
 
     # Summary
-    print("\n" + "=" * 60)
-    print("COMPARISON SUMMARY")
-    print("=" * 60)
+    log("\n" + "=" * 60)
+    log("COMPARISON SUMMARY")
+    log("=" * 60)
     for name, metrics in results.items():
-        print(f"{name:20s}: Acc={metrics['accuracy']:.4f}, "
-              f"ConfAcc={metrics.get('confidence_accuracy', 0):.4f}")
+        log(f"{name:20s}: Acc={metrics['accuracy']:.4f}, "
+            f"ConfAcc={metrics.get('confidence_accuracy', 0):.4f}")
 
     return results
 
@@ -615,4 +621,4 @@ if __name__ == '__main__':
     # Test
     metrics = test(model, test_loader, torch.device(config.device))
 
-    print("\nEngine tests passed!")
+    log("\nEngine tests passed!")
