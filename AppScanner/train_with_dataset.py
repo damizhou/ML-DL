@@ -12,6 +12,7 @@ import os
 import sys
 import json
 import pickle
+import logging
 import numpy as np
 import torch
 from datetime import datetime
@@ -19,6 +20,47 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from config import AppScannerConfig, get_config
+
+
+# =============================================================================
+# Logging Setup
+# =============================================================================
+
+def setup_logging(output_dir: str) -> str:
+    """Setup logging to both console and file."""
+    os.makedirs(output_dir, exist_ok=True)
+
+    log_filename = f"train_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    log_path = os.path.join(output_dir, log_filename)
+
+    # Create logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+
+    # Remove existing handlers
+    logger.handlers = []
+
+    # File handler
+    file_handler = logging.FileHandler(log_path, encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter('%(message)s'))
+
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+    return log_path
+
+
+def log(message: str = ""):
+    """Log message to both console and file."""
+    logging.info(message)
+
+
 from models import AppScannerNN, AppScannerDeep, build_model
 from data import (
     create_dataset_from_directory,
@@ -44,7 +86,10 @@ class TrainArgs:
     # Data paths
     data_dir: str = './data'                    # Directory with PCAP files
     csv_path: Optional[str] = None              # CSV file with features
-    features_path: str = '/home/pcz/DL/ML_DL/AppScanner/data/iscxvpn/iscxvpn_appscanner.pkl'  # Pre-extracted features
+    features_path: str = './data/iscxvpn/iscxvpn_appscanner.pkl'  # Pre-extracted features
+    # features_path: str = './data/iscxvpn/iscxvpn_appscanner.pkl'  # Pre-extracted features
+    # features_path: str = './data/iscxvpn/iscxvpn_appscanner.pkl'  # Pre-extracted features
+    # features_path: str = './data/iscxvpn/iscxvpn_appscanner.pkl'  # Pre-extracted features
 
     # Model configuration
     model_type: str = 'nn'                      # 'nn', 'deep', or 'rf'
@@ -133,13 +178,13 @@ def create_config_from_args(args) -> AppScannerConfig:
 def load_data(args, config):
     """Load data based on arguments."""
     if args.features_path is not None:
-        print(f"Loading pre-extracted features from {args.features_path}")
+        log(f"Loading pre-extracted features from {args.features_path}")
         features, labels, label_map = load_dataset(args.features_path)
     elif args.csv_path is not None:
-        print(f"Loading features from CSV: {args.csv_path}")
+        log(f"Loading features from CSV: {args.csv_path}")
         features, labels, label_map = create_dataset_from_csv(args.csv_path)
     else:
-        print(f"Extracting features from PCAP files in {args.data_dir}")
+        log(f"Extracting features from PCAP files in {args.data_dir}")
         features, labels, label_map = create_dataset_from_directory(
             args.data_dir,
             min_flow_length=config.min_flow_length,
@@ -155,21 +200,21 @@ def load_data(args, config):
 
 def mode_train(args, config):
     """Training mode."""
-    print("=" * 60)
-    print("AppScanner Training")
-    print("=" * 60)
+    log("=" * 60)
+    log("AppScanner Training")
+    log("=" * 60)
 
     # Load data
     features, labels, label_map = load_data(args, config)
-    print(f"Features shape: {features.shape}")
-    print(f"Number of classes: {config.num_classes}")
+    log(f"Features shape: {features.shape}")
+    log(f"Number of classes: {config.num_classes}")
 
     # Print class distribution
-    print("\nClass distribution:")
+    log("\nClass distribution:")
     unique, counts = np.unique(labels, return_counts=True)
     for label_id, count in zip(unique, counts):
         class_name = label_map.get(label_id, f"Unknown({label_id})")
-        print(f"  {class_name}: {count} ({count/len(labels)*100:.1f}%)")
+        log(f"  {class_name}: {count} ({count/len(labels)*100:.1f}%)")
 
     # Create dataloaders with 8:1:1 split (train:val:test)
     train_loader, val_loader, test_loader, norm_params = create_dataloaders(
@@ -202,8 +247,8 @@ def mode_train(args, config):
     else:
         raise ValueError(f"Unknown model type: {args.model_type}")
 
-    print(f"\nModel: {args.model_type}")
-    print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    log(f"\nModel: {args.model_type}")
+    log(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Train
     model, history = train(
@@ -233,27 +278,28 @@ def mode_train(args, config):
             'confidence_accuracy': metrics.confidence_accuracy,
         },
     }, final_path)
-    print(f"\nModel saved to {final_path}")
+    log(f"\nModel saved to {final_path}")
 
     # Save training history
-    history_path = os.path.join(config.output_dir, 'history.json')
+    time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    history_path = os.path.join(config.output_dir, f'history_{time}.json')
     with open(history_path, 'w') as f:
         json.dump(history, f, indent=2)
-    print(f"Training history saved to {history_path}")
+    log(f"Training history saved to {history_path}")
 
     return model, metrics
 
 
 def mode_eval(args, config):
     """Evaluation mode."""
-    print("=" * 60)
-    print("AppScanner Evaluation")
-    print("=" * 60)
+    log("=" * 60)
+    log("AppScanner Evaluation")
+    log("=" * 60)
 
     if args.checkpoint is None:
         args.checkpoint = os.path.join(config.output_dir, 'best_model.pth')
 
-    print(f"Loading checkpoint: {args.checkpoint}")
+    log(f"Loading checkpoint: {args.checkpoint}")
     checkpoint = torch.load(args.checkpoint, map_location=config.device, weights_only=False)
 
     # Load config from checkpoint
@@ -297,9 +343,9 @@ def mode_eval(args, config):
 
 def mode_extract(args, config):
     """Feature extraction mode."""
-    print("=" * 60)
-    print("AppScanner Feature Extraction")
-    print("=" * 60)
+    log("=" * 60)
+    log("AppScanner Feature Extraction")
+    log("=" * 60)
 
     # Extract features
     features, labels, label_map = create_dataset_from_directory(
@@ -313,18 +359,18 @@ def mode_extract(args, config):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     save_dataset(features, labels, label_map, output_path)
 
-    print(f"Features shape: {features.shape}")
-    print(f"Number of classes: {len(label_map)}")
-    print(f"Saved to: {output_path}")
+    log(f"Features shape: {features.shape}")
+    log(f"Number of classes: {len(label_map)}")
+    log(f"Saved to: {output_path}")
 
     return features, labels, label_map
 
 
 def mode_compare(args, config):
     """Compare different approaches."""
-    print("=" * 60)
-    print("AppScanner Approach Comparison")
-    print("=" * 60)
+    log("=" * 60)
+    log("AppScanner Approach Comparison")
+    log("=" * 60)
 
     # Load data
     features, labels, label_map = load_data(args, config)
@@ -343,8 +389,8 @@ def mode_compare(args, config):
     X_test = features[test_indices]
     y_test = labels[test_indices]
 
-    print(f"Train samples: {len(y_train)}")
-    print(f"Test samples: {len(y_test)}")
+    log(f"Train samples: {len(y_train)}")
+    log(f"Test samples: {len(y_test)}")
 
     # Compare approaches
     results = compare_approaches(
@@ -356,7 +402,7 @@ def mode_compare(args, config):
     os.makedirs(config.output_dir, exist_ok=True)
     with open(results_path, 'w') as f:
         json.dump(results, f, indent=2)
-    print(f"\nResults saved to {results_path}")
+    log(f"\nResults saved to {results_path}")
 
     return results
 
@@ -373,18 +419,22 @@ def main():
     # Create output directory
     os.makedirs(config.output_dir, exist_ok=True)
 
+    # Setup logging
+    log_path = setup_logging(config.output_dir)
+
     # Print configuration
-    print("\nConfiguration:")
-    print(f"  Mode: {args.mode}")
-    print(f"  Model: {args.model_type}")
-    print(f"  Data: {args.features_path or args.data_dir}")
-    print(f"  Device: {config.device}")
-    print(f"  Epochs: {config.epochs}")
-    print(f"  Batch size: {config.batch_size}")
-    print(f"  Learning rate: {config.learning_rate}")
-    print(f"  Num classes: {args.num_classes if args.num_classes else 'auto'}")
-    print(f"  Prediction threshold: {config.prediction_threshold}")
-    print()
+    log("\nConfiguration:")
+    log(f"  Mode: {args.mode}")
+    log(f"  Model: {args.model_type}")
+    log(f"  Data: {args.features_path or args.data_dir}")
+    log(f"  Device: {config.device}")
+    log(f"  Epochs: {config.epochs}")
+    log(f"  Batch size: {config.batch_size}")
+    log(f"  Learning rate: {config.learning_rate}")
+    log(f"  Num classes: {args.num_classes if args.num_classes else 'auto'}")
+    log(f"  Prediction threshold: {config.prediction_threshold}")
+    log(f"  Log file: {log_path}")
+    log()
 
     # Run mode
     if args.mode == 'train':
