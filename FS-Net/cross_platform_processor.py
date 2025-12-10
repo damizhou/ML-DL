@@ -368,10 +368,25 @@ def process_iscx_dataset():
             print(f"    flows_before_filter={info['flows_before_filter']}, "
                   f"flows_after_filter={info['flows_after_filter']} (min_packets={MIN_PACKETS})")
 
-    # Convert labels to numpy array
-    labels = np.array(all_labels, dtype=np.int64)
+    # Filter out empty classes and remap labels
+    valid_classes = sorted([label_id for label_id in vocab.keys() if class_counts.get(label_id, 0) > 0])
+    empty_classes = sorted([label_id for label_id in vocab.keys() if class_counts.get(label_id, 0) == 0])
+
+    if empty_classes:
+        print(f"\nRemoving {len(empty_classes)} empty classes:")
+        for label_id in empty_classes:
+            print(f"  [{label_id:2d}] {vocab[label_id]}")
+
+    # Create new label mapping (old_id -> new_id)
+    old_to_new = {old_id: new_id for new_id, old_id in enumerate(valid_classes)}
+    new_vocab = {new_id: vocab[old_id] for new_id, old_id in enumerate(valid_classes)}
+
+    # Remap labels
+    all_labels_remapped = [old_to_new[label] for label in all_labels]
+    labels = np.array(all_labels_remapped, dtype=np.int64)
 
     print(f"\nTotal flows extracted: {len(labels)}")
+    print(f"Valid classes: {len(valid_classes)} (removed {len(empty_classes)} empty)")
 
     # Create output directory
     output_path = Path(OUTPUT_DIR)
@@ -381,8 +396,8 @@ def process_iscx_dataset():
     data = {
         'sequences': all_sequences,  # List of variable-length sequences
         'labels': labels,
-        'label_map': vocab,
-        'num_classes': len(vocab),
+        'label_map': new_vocab,
+        'num_classes': len(new_vocab),
         'max_seq_len': MAX_PACKETS,
         'max_packet_len': MAX_PACKET_LEN,
         'min_packets': MIN_PACKETS,
@@ -397,19 +412,20 @@ def process_iscx_dataset():
     print("Processing Complete!")
     print("=" * 50)
     print(f"Total samples: {len(labels)}")
-    print(f"Num classes: {len(vocab)}")
+    print(f"Num classes: {len(new_vocab)}")
     print("\nFlows per class:")
     total_flows = len(labels)
-    for label_id in sorted(vocab.keys()):
-        count = class_counts.get(label_id, 0)
+    for new_id, class_name in new_vocab.items():
+        old_id = valid_classes[new_id]
+        count = class_counts.get(old_id, 0)
         pct = count / total_flows * 100 if total_flows > 0 else 0
-        print(f"  [{label_id:2d}] {vocab[label_id]:15s}: {count:6d} ({pct:5.1f}%)")
+        print(f"  [{new_id:2d}] {class_name:15s}: {count:6d} ({pct:5.1f}%)")
 
     print(f"\nDataset saved to:")
     print(f"  {pickle_path}")
 
     print(f"\nUsage:")
-    print(f"  python train.py --data_path {pickle_path} --num_classes {len(vocab)}")
+    print(f"  python train.py --data_path {pickle_path} --num_classes {len(new_vocab)}")
 
 
 if __name__ == '__main__':
