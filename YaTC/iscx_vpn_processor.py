@@ -516,12 +516,29 @@ def process_iscxvpn_dataset():
             print(f"    flows_before_filter={info['flows_before_filter']}, "
                   f"flows_after_filter={info['flows_after_filter']} (min_packets={MIN_PACKETS})")
 
+    # Filter out classes with less than MIN_SAMPLES samples
+    MIN_SAMPLES = 10
+    valid_classes = sorted([label_id for label_id in vocab.keys() if class_counts.get(label_id, 0) >= MIN_SAMPLES])
+    removed_classes = sorted([label_id for label_id in vocab.keys() if class_counts.get(label_id, 0) < MIN_SAMPLES])
+
+    if removed_classes:
+        print(f"\nRemoving {len(removed_classes)} classes with < {MIN_SAMPLES} samples:")
+        for label_id in removed_classes:
+            count = class_counts.get(label_id, 0)
+            print(f"  [{label_id:2d}] {vocab[label_id]} ({count} samples)")
+
+    # Filter out samples belonging to removed classes
+    valid_indices = [i for i, label in enumerate(all_labels) if label in valid_classes]
+    all_images = [all_images[i] for i in valid_indices]
+    all_labels = [all_labels[i] for i in valid_indices]
+
     # Convert to numpy arrays
     images = np.stack(all_images, axis=0).astype(np.uint8)
     labels = np.array(all_labels, dtype=np.int64)
 
-    print(f"\nTotal MFR images extracted: {len(labels)}")
+    print(f"\nTotal MFR images after filtering: {len(labels)}")
     print(f"Images shape: {images.shape}")
+    print(f"Valid classes: {len(valid_classes)} (removed {len(removed_classes)} classes)")
 
     # Create output directory
     output_path = Path(OUTPUT_DIR)
@@ -530,7 +547,7 @@ def process_iscxvpn_dataset():
     # Save per-class NPZ files (same format as unified_vpn_processor.py)
     # Format: <label>.npz in root directory
     saved_labels = []
-    for label_id in sorted(vocab.keys()):
+    for label_id in valid_classes:
         label_name = vocab[label_id]
         mask = labels == label_id
         if mask.sum() > 0:
@@ -575,10 +592,10 @@ def process_iscxvpn_dataset():
     print(f"Image shape: {IMAGE_SIZE}×{IMAGE_SIZE}")
     print("\nMFR images per class:")
     total_images = len(labels)
-    for label_id in sorted(vocab.keys()):
+    for new_id, label_id in enumerate(valid_classes):
         count = class_counts.get(label_id, 0)
         pct = count / total_images * 100 if total_images > 0 else 0
-        print(f"  [{label_id:2d}] {vocab[label_id]:15s}: {count:6d} ({pct:5.1f}%)")
+        print(f"  [{new_id:2d}] {vocab[label_id]:15s}: {count:6d} ({pct:5.1f}%)")
 
     print(f"\nDataset saved to:")
     print(f"  {output_path}/")

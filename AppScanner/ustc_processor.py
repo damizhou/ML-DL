@@ -453,29 +453,33 @@ def process_iscxvpn_dataset():
             print(f"    flows_before_filter={info['flows_before_filter']}, "
                   f"flows_after_filter={info['flows_after_filter']} (min_packets={MIN_PACKETS})")
 
-    # Filter out empty classes and remap labels
-    valid_classes = sorted([label_id for label_id in vocab.keys() if class_counts.get(label_id, 0) > 0])
-    empty_classes = sorted([label_id for label_id in vocab.keys() if class_counts.get(label_id, 0) == 0])
+    # Filter out classes with less than MIN_SAMPLES samples
+    MIN_SAMPLES = 10
+    valid_classes = sorted([label_id for label_id in vocab.keys() if class_counts.get(label_id, 0) >= MIN_SAMPLES])
+    removed_classes = sorted([label_id for label_id in vocab.keys() if class_counts.get(label_id, 0) < MIN_SAMPLES])
 
-    if empty_classes:
-        print(f"\nRemoving {len(empty_classes)} empty classes:")
-        for label_id in empty_classes:
-            print(f"  [{label_id:2d}] {vocab[label_id]}")
+    if removed_classes:
+        print(f"\nRemoving {len(removed_classes)} classes with < {MIN_SAMPLES} samples:")
+        for label_id in removed_classes:
+            count = class_counts.get(label_id, 0)
+            print(f"  [{label_id:2d}] {vocab[label_id]} ({count} samples)")
 
     # Create new label mapping (old_id -> new_id)
     old_to_new = {old_id: new_id for new_id, old_id in enumerate(valid_classes)}
     new_vocab = {new_id: vocab[old_id] for new_id, old_id in enumerate(valid_classes)}
 
-    # Remap labels
-    all_labels_remapped = [old_to_new[label] for label in all_labels]
+    # Filter out samples belonging to removed classes and remap labels
+    valid_indices = [i for i, label in enumerate(all_labels) if label in old_to_new]
+    all_features = [all_features[i] for i in valid_indices]
+    all_labels_remapped = [old_to_new[all_labels[i]] for i in valid_indices]
 
     # Convert to numpy arrays
     features = np.array(all_features, dtype=np.float32)
     labels = np.array(all_labels_remapped, dtype=np.int64)
 
-    print(f"\nTotal flows extracted: {len(labels)}")
+    print(f"\nTotal flows after filtering: {len(labels)}")
     print(f"Feature shape: {features.shape}")
-    print(f"Valid classes: {len(valid_classes)} (removed {len(empty_classes)} empty)")
+    print(f"Valid classes: {len(valid_classes)} (removed {len(removed_classes)} classes)")
 
     # Create output directory
     output_path = Path(OUTPUT_DIR)
