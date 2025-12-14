@@ -11,31 +11,85 @@ YaTC（Yet Another Traffic Classifier）是一个基于掩码自编码器的流�
 ## 模型架构
 
 ### 预训练阶段：MAE_YaTC (掩码自编码器)
+
+YaTC 采用 **掩码自编码器 (Masked Autoencoder, MAE)** 进行自监督预训练，核心思想是随机遮挡输入的大部分内容，然后让模型重建被遮挡的部分。
+
 ```
-输入: MFR 图像 (40×40 灰度)
+输入: MFR 图像 (B, 1, 40, 40)
   ↓
-PatchEmbed (patch_size=2) → 400 个 patch
+┌─────────────────────────────────────────────────────────┐
+│ 1. Patch Embedding                                      │
+│    - patch_size = 2×2                                   │
+│    - 每个数据包(8行) → 80 个 patch (4×20)               │
+│    - 5 个数据包 → 总计 400 个 patch                     │
+└─────────────────────────────────────────────────────────┘
   ↓
-随机掩码 (90%)
+┌─────────────────────────────────────────────────────────┐
+│ 2. Random Masking (90%)                                 │
+│    - 随机打乱 patch 顺序                                │
+│    - 保留前 10% (40 个 patch)，遮挡 90% (360 个)        │
+│    - 记录 ids_restore 用于后续恢复顺序                  │
+└─────────────────────────────────────────────────────────┘
   ↓
-Encoder (4 层 Transformer, dim=192, heads=16)
+┌─────────────────────────────────────────────────────────┐
+│ 3. Encoder (轻量高效)                                   │
+│    - 4 层 Transformer Block                             │
+│    - embed_dim = 192, num_heads = 16                    │
+│    - 仅处理未被遮挡的 40 个 patch (计算量降低 90%)      │
+│    - 添加 CLS token 和位置编码                          │
+└─────────────────────────────────────────────────────────┘
   ↓
-Decoder (2 层 Transformer, dim=128)
+┌─────────────────────────────────────────────────────────┐
+│ 4. Decoder (重建)                                       │
+│    - 线性映射: 192 → 128 维                             │
+│    - 插入可学习的 mask_token 替代被遮挡位置             │
+│    - 恢复完整 400 patch 序列                            │
+│    - 2 层 Transformer Block (decoder_dim=128)           │
+│    - 预测头: 128 → 4 (patch_size² × in_chans)           │
+└─────────────────────────────────────────────────────────┘
   ↓
-重建原始图像 (MSE Loss)
+┌─────────────────────────────────────────────────────────┐
+│ 5. Reconstruction Loss                                  │
+│    - 将预测与原始 patch 像素值比较                      │
+│    - MSE Loss: (pred - target)²                         │
+│    - 仅在被遮挡位置计算损失 (mask=1 的位置)             │
+└─────────────────────────────────────────────────────────┘
 ```
 
+**为什么使用 90% 掩码率？**
+- 网络流量数据存在高度冗余性（协议头部、填充字节、重复模式）
+- 高掩码率迫使模型学习更鲁棒的语义特征，而非简单的像素插值
+- 计算效率高：Encoder 只需处理 10% 的 token，大幅降低计算成本
+
 ### 微调阶段：TraFormer_YaTC (分类器)
+
 ```
-输入: MFR 图像 (40×40 灰度)
+输入: MFR 图像 (B, 1, 40, 40)
   ↓
-PatchEmbed (patch_size=2)
+┌─────────────────────────────────────────────────────────┐
+│ 1. Patch Embedding (与预训练相同)                       │
+│    - 400 个 patch + CLS token + 位置编码                │
+└─────────────────────────────────────────────────────────┘
   ↓
-加载预训练 Encoder 权重
+┌─────────────────────────────────────────────────────────┐
+│ 2. 加载预训练 Encoder 权重                              │
+│    - 仅加载 Encoder 部分，丢弃 Decoder                  │
+│    - 丢弃 mask_token, decoder_embed, decoder_blocks     │
+└─────────────────────────────────────────────────────────┘
   ↓
-Encoder + CLS token
+┌─────────────────────────────────────────────────────────┐
+│ 3. Encoder (全部 patch 参与)                            │
+│    - 4 层 Transformer Block                             │
+│    - 处理完整 400 个 patch (无掩码)                     │
+│    - 逐层学习率衰减 (layer_decay=0.65)                  │
+└─────────────────────────────────────────────────────────┘
   ↓
-Classifier → num_classes
+┌─────────────────────────────────────────────────────────┐
+│ 4. Classification Head                                  │
+│    - 提取 CLS token 作为全局表示                        │
+│    - Linear: embed_dim → num_classes                    │
+│    - CrossEntropy Loss                                  │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ## MFR 数据格式
@@ -56,46 +110,42 @@ Classifier → num_classes
 
 ```
 YaTC/
-├── Model_YaTC_pytorch.py       # 独立模型定义
+├── Model_YaTC_pytorch.py         # 独立模型定义 (YaTC 分类器，含 Packet/Flow-level Attention)
 │
-├── github/                     # 原始实现
-│   ├── models_YaTC.py          # MAE_YaTC, TraFormer_YaTC
-│   ├── pre-train.py            # 预训练脚本
-│   ├── fine-tune.py            # 微调脚本
-│   ├── data_process.py         # PCAP → MFR 转换
-│   ├── engine.py               # 训练循环
-│   └── util/                   # 工具函数
-│       ├── lr_decay.py         # 逐层学习率衰减
-│       ├── lr_sched.py         # 学习率调度
-│       ├── pos_embed.py        # 位置嵌入
-│       └── misc.py             # 杂项工具
+├── refactor/                     # 重构版本 (推荐使用)
+│   ├── models.py                 # MAE_YaTC (预训练) + TraFormer_YaTC (微调)
+│   ├── config.py                 # 配置定义
+│   ├── data.py                   # 数据加载
+│   ├── engine.py                 # 训练/评估循环
+│   ├── train.py                  # 训练入口
+│   ├── pcap_to_mfr.py            # PCAP → MFR 转换
+│   └── tests.py                  # 单元测试
 │
-├── ISCXVPN/                    # ISCXVPN 专用
-│   ├── build_yatc_dataset.py   # 数据集构建
-│   ├── train_yatc_simple.py    # 简化训练脚本
-│   └── github/                 # ISCXVPN 专用原始代码
+├── iscx_vpn_processor.py         # ISCXVPN2016 数据处理
+├── iscx_tor_processor.py         # ISCXTor2016 数据处理
+├── ustc_processor.py             # USTC-TFC2016 数据处理
+├── cic_iot_2022_processor.py     # CICIoT2022 数据处理
+├── cross_platform_processor.py   # 跨平台数据处理
 │
-└── refactor/                   # 重构版本
-    ├── models.py
-    ├── data.py
-    ├── engine.py
-    └── train.py
+├── vpn_build_npz.py              # VPN 数据集 NPZ 构建
+└── train_vpn.py                  # VPN 训练脚本
 ```
 
 ## 快速开始
 
 ### 1. 数据准备 (PCAP → MFR)
 ```bash
-cd github
-# 编辑 data_process.py 中的路径
-python data_process.py
+cd refactor
+# 编辑 pcap_to_mfr.py 中的路径
+python pcap_to_mfr.py
 # 输出: data/<dataset>_MFR/train/class/*.png
 #       data/<dataset>_MFR/test/class/*.png
 ```
 
-### 2. 预训练
+### 2. 预训练 (MAE)
 ```bash
-python pre-train.py \
+cd refactor
+python train.py --mode pretrain \
     --batch_size 128 \
     --blr 1e-3 \
     --steps 150000 \
@@ -103,14 +153,15 @@ python pre-train.py \
 # 输出: output_dir/YaTC_pretrained_model.pth
 ```
 
-### 3. 微调
+### 3. 微调 (分类)
 ```bash
-python fine-tune.py \
+python train.py --mode finetune \
     --blr 2e-3 \
     --epochs 200 \
     --data_path ./data/ISCXVPN2016_MFR \
     --nb_classes 7 \
-    --finetune ./output_dir/YaTC_pretrained_model.pth
+    --finetune ./output_dir/YaTC_pretrained_model.pth \
+    --layer_decay 0.65
 ```
 
 ## 关键参数
@@ -162,17 +213,13 @@ data/ISCXVPN2016_MFR/
 ## 依赖版本
 
 ```
-timm == 0.3.2  # 必须，版本敏感！
 torch >= 1.9.0
 numpy
 PIL/Pillow
 scikit-learn
 ```
 
-**注意**: `timm` 版本必须为 `0.3.2`，代码中有版本检查：
-```python
-assert timm.__version__ == "0.3.2"  # models_YaTC.py
-```
+**注意**: refactor 版本已移除对 `timm` 的依赖，所有模型组件均为原生 PyTorch 实现。
 
 ## 模型关键参数
 
@@ -194,7 +241,8 @@ decoder_depth = 2
 
 ## 注意事项
 
-1. **timm 版本**: 必须使用 `timm==0.3.2`，新版本 API 不兼容
-2. **预训练数据**: 预训练可以使用大规模无标签数据
-3. **逐层衰减**: 微调时底层使用更小的学习率 (`layer_decay=0.65`)
-4. **掩码比例**: 90% 掩码比例是论文推荐值，对流量数据效果最好
+1. **预训练数据**: 预训练可以使用大规模无标签数据，不需要类别标签
+2. **逐层衰减**: 微调时底层使用更小的学习率 (`layer_decay=0.65`)，让预训练特征更稳定
+3. **掩码比例**: 90% 掩码比例是论文推荐值，对流量数据效果最好
+4. **权重加载**: 微调时仅加载 Encoder 权重，Decoder 权重会被丢弃
+5. **学习率调度**: 预训练和微调都使用 warmup + cosine decay 策略
