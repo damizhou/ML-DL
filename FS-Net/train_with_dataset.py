@@ -78,7 +78,9 @@ class TrainArgs:
     # data_path: str = './data/cic_iot_2022/cic_iot_2022_fsnet.pkl'  # Pre-extracted features
     # data_path: str = './data/cross_platform/cross_platform_fsnet.pkl'  # Pre-extracted features
     # data_path: str = './data/iscxtor/iscxtor_fsnet.pkl'  # Pre-extracted features
-    data_path: str = './data/ustc/ustc_fsnet.pkl'  # Pre-extracted features
+    # data_path: str = './data/ustc/ustc_fsnet.pkl'  # Pre-extracted features
+    data_path: str = './data/novpn/novpn_fsnet.pkl'  # Pre-extracted features
+    data_path: str = './data/vpn/vpn_fsnet.pkl'  # Pre-extracted features
 
     # Model configuration
     model_type: str = 'fsnet'               # 'fsnet' or 'fsnet_nd' (no decoder)

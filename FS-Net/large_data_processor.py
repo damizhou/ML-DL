@@ -205,13 +205,15 @@ def main():
     parser.add_argument(
         "--input", "-i",
         type=str,
-        default="./data/novpn_unified_output",
+        # default="./data/novpn_unified_output",
+        default="./data/vpn_unified_output",
         help="输入目录 (unified_novpn_processor 输出)"
     )
     parser.add_argument(
         "--output", "-o",
         type=str,
-        default="./data/novpn/novpn_fsnet.pkl",
+        # default="./data/novpn/novpn_fsnet.pkl",
+        default="./data/novpn/vpn_fsnet.pkl",
         help="输出 pickle 文件路径"
     )
     parser.add_argument(
