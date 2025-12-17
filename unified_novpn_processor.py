@@ -110,8 +110,8 @@ class Config:
 
     # YaTC 参数 (5包 × 320字节 = 1600字节 = 40×40)
     yatc_num_packets: int = 5
-    yatc_header_len: int = 40      # IP + TCP/UDP 头部
-    yatc_payload_len: int = 280    # 载荷
+    yatc_header_len: int = 80      # IP + TCP/UDP 头部
+    yatc_payload_len: int = 240    # 载荷
     yatc_image_size: int = 40
 
 

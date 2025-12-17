@@ -558,10 +558,10 @@ def process_iscxvpn_dataset():
             np.savez_compressed(
                 class_path,
                 images=class_images,
-                label=label_name,
+                label=safe_label_name,  # Use safe label name for consistency
                 label_id=label_id
             )
-            saved_labels.append(label_name)
+            saved_labels.append(safe_label_name)  # Use safe label name
             print(f"  Saved {class_path.name}: {len(class_images)} images")
 
     # Save label mapping as JSON (same format as unified_vpn_processor.py)

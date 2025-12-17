@@ -56,14 +56,22 @@ import numpy as np
 
 
 # ==================== 配置参数 ====================
-# 输入目录列表（多个数据集的 train split）
+# 脚本所在目录（用于解析相对路径）
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+# 输入目录列表（多个数据集的 train split，相对于脚本目录）
 INPUT_DIRS = [
-    "YaTC/data/iscxtor_split/train",
-    "YaTC/data/iscxvpn_split/train",
+    "data/iscxtor_split/train",
+    "data/cic_iot_2022_split/train",
+    "data/cross_platform_split/train",
+    "data/novpn_unified_split/train",
+    "data/vpn_unified_split/train",
+    "data/iscxvpn_split/train",
+    "data/ustc_split/train"
 ]
 
-# 输出目录
-OUTPUT_DIR = "YaTC/data/merged_pretrain"
+# 输出目录（相对于脚本目录）
+OUTPUT_DIR = "data/merged_pretrain"
 
 # 数据集名称（用作标签前缀，None 表示从目录名推断）
 DATASET_NAMES = None
@@ -232,9 +240,9 @@ def merge_datasets(
 
 
 def main():
-    # 使用配置参数
-    input_dirs = [Path(p) for p in INPUT_DIRS]
-    output_dir = Path(OUTPUT_DIR)
+    # 使用配置参数，相对路径基于脚本目录
+    input_dirs = [SCRIPT_DIR / p for p in INPUT_DIRS]
+    output_dir = SCRIPT_DIR / OUTPUT_DIR
 
     # 验证输入目录
     for d in input_dirs:

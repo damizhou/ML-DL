@@ -200,7 +200,7 @@ def main():
     parser.add_argument(
         "--output", "-o",
         type=str,
-        default="./data/novpn/vpn_appscanner.pkl",
+        default="./data/vpn/vpn_appscanner.pkl",
         help="输出 pickle 文件路径"
     )
     parser.add_argument(

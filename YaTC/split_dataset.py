@@ -54,7 +54,13 @@ import numpy as np
 
 # ==================== 配置参数 ====================
 # 输入目录（包含 NPZ 文件和 labels.json）
-INPUT_DIR = "data/iscxtor"
+# INPUT_DIR = "data/iscxtor"
+INPUT_DIR = "data/iscxvpn"
+# INPUT_DIR = "data/cross_platform"
+# INPUT_DIR = "data/ustc"
+# INPUT_DIR = "data/novpn_unified_output"
+# INPUT_DIR = "data/vpn_unified_output"
+# INPUT_DIR = "data/cic_iot_2022"
 
 # 输出目录（None 表示使用 <input>_split）
 OUTPUT_DIR = None
@@ -71,7 +77,7 @@ TEST_RATIO = 0.1
 SEED = 42
 
 # 每个 split 最少样本数（少于此数的类别会被跳过）
-MIN_SAMPLES = 3
+MIN_SAMPLES = 1
 # ================================================
 
 
