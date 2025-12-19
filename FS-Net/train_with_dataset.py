@@ -79,7 +79,7 @@ class TrainArgs:
     # data_path: str = './data/cross_platform/cross_platform_fsnet.pkl'  # Pre-extracted features
     # data_path: str = './data/iscxtor/iscxtor_fsnet.pkl'  # Pre-extracted features
     # data_path: str = './data/ustc/ustc_fsnet.pkl'  # Pre-extracted features
-    data_path: str = './data/novpn/novpn_fsnet.pkl'  # Pre-extracted features
+    # data_path: str = './data/novpn/novpn_fsnet.pkl'  # Pre-extracted features
     data_path: str = './data/vpn/vpn_fsnet.pkl'  # Pre-extracted features
 
     # Model configuration
@@ -93,7 +93,7 @@ class TrainArgs:
 
     # Training parameters
     epochs: int = 100
-    batch_size: int = 2048                  # Increased for RTX 4090
+    batch_size: int = 4096                  # 增大 batch_size 提升 GPU 利用率 (RTX 4090 24GB)
     lr: float = 0.0005                      # Learning rate (paper: 0.0005)
     patience: int = 20                      # Early stopping patience
 
@@ -111,8 +111,10 @@ class TrainArgs:
 
     # Misc
     seed: int = 42
-    num_workers: int = 0                    # Windows compatibility
+    num_workers: int = 8                    # 多进程数据加载 (服务器环境)
     use_class_weight: bool = False          # Use class weights for imbalanced data
+    prefetch_factor: int = 4                # 每个 worker 预取的 batch 数
+    persistent_workers: bool = True         # 保持 worker 进程存活，避免重复创建开销
 
 
 def get_args() -> TrainArgs:
@@ -186,7 +188,9 @@ def mode_train(args: TrainArgs):
         test_ratio=args.test_ratio,
         seed=args.seed,
         num_workers=args.num_workers,
-        use_direction=True
+        use_direction=True,
+        prefetch_factor=args.prefetch_factor,
+        persistent_workers=args.persistent_workers
     )
 
     # Compute class weights

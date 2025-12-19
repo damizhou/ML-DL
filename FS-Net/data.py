@@ -504,7 +504,9 @@ def create_dataloaders(
     seed: int = 42,
     num_workers: int = 4,
     max_packet_len: int = 1500,
-    use_direction: bool = True
+    use_direction: bool = True,
+    prefetch_factor: int = 2,
+    persistent_workers: bool = False
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """Create train, validation, and test dataloaders.
 
@@ -554,6 +556,12 @@ def create_dataloaders(
     val_dataset = SequenceDataset(val_sequences, val_labels, max_packet_len, use_direction)
     test_dataset = SequenceDataset(test_sequences, test_labels, max_packet_len, use_direction)
 
+    # DataLoader 额外参数（仅在 num_workers > 0 时生效）
+    extra_loader_args = {}
+    if num_workers > 0:
+        extra_loader_args['prefetch_factor'] = prefetch_factor
+        extra_loader_args['persistent_workers'] = persistent_workers
+
     # Create loaders
     train_loader = DataLoader(
         train_dataset,
@@ -562,7 +570,8 @@ def create_dataloaders(
         num_workers=num_workers,
         collate_fn=collate_fn,
         pin_memory=True,
-        drop_last=True
+        drop_last=True,
+        **extra_loader_args
     )
 
     val_loader = DataLoader(
@@ -571,7 +580,8 @@ def create_dataloaders(
         shuffle=False,
         num_workers=num_workers,
         collate_fn=collate_fn,
-        pin_memory=True
+        pin_memory=True,
+        **extra_loader_args
     )
 
     test_loader = DataLoader(
@@ -580,7 +590,8 @@ def create_dataloaders(
         shuffle=False,
         num_workers=num_workers,
         collate_fn=collate_fn,
-        pin_memory=True
+        pin_memory=True,
+        **extra_loader_args
     )
 
     log(f"Dataset split (8:1:1):")
