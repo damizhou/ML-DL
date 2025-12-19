@@ -93,7 +93,7 @@ class TrainArgs:
 
     # Training parameters
     epochs: int = 100
-    batch_size: int = 4096                  # 增大 batch_size 提升 GPU 利用率 (RTX 4090 24GB)
+    batch_size: int = 2048                  # RTX 4090 (变长序列 padding 后显存占用大)
     lr: float = 0.0005                      # Learning rate (paper: 0.0005)
     patience: int = 20                      # Early stopping patience
 
