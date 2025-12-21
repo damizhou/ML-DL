@@ -411,6 +411,9 @@ def mode_compare(args, config):
 
 
 def main():
+    # 记录开始时间
+    start_time = datetime.now()
+
     args = get_args()
 
     # Set seed
@@ -427,6 +430,7 @@ def main():
 
     # Print configuration
     log("\nConfiguration:")
+    log(f"  Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     log(f"  Mode: {args.mode}")
     log(f"  Model: {args.model_type}")
     log(f"  Data: {args.features_path or args.data_dir}")
@@ -448,6 +452,17 @@ def main():
         mode_extract(args, config)
     elif args.mode == 'compare':
         mode_compare(args, config)
+
+    # 记录结束时间并计算用时
+    end_time = datetime.now()
+    elapsed_time = end_time - start_time
+    hours, remainder = divmod(int(elapsed_time.total_seconds()), 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    log()
+    log(f"Start time:   {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    log(f"End time:     {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    log(f"Elapsed time: {hours:02d}:{minutes:02d}:{seconds:02d}")
 
 
 if __name__ == '__main__':

@@ -347,7 +347,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import merge_datasets as merge
     main()
-    time.sleep(60)
-    merge.main()

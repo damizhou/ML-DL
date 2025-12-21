@@ -99,12 +99,16 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # =============================================================================
 
 def main():
+    # 记录开始时间
+    start_time = datetime.now()
+
     # Setup logging
     log_path = setup_logging(OUTPUT_DIR)
 
     log("=" * 60)
     log("YaTC Pre-training (MAE)")
     log("=" * 60)
+    log(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     log(f"Data path: {DATA_PATH}")
     log(f"Output dir: {OUTPUT_DIR}")
     log(f"Device: {DEVICE}")
@@ -237,8 +241,18 @@ def main():
         json.dump(history, f, indent=2)
     log(f"Training history saved to: {history_path}")
 
+    # 记录结束时间并计算用时
+    end_time = datetime.now()
+    elapsed_time = end_time - start_time
+    hours, remainder = divmod(int(elapsed_time.total_seconds()), 3600)
+    minutes, seconds = divmod(remainder, 60)
+
     log(f"\nFinal Loss: {metrics['loss']:.4f}")
     log(f"Total Steps: {step}")
+    log()
+    log(f"Start time:   {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    log(f"End time:     {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    log(f"Elapsed time: {hours:02d}:{minutes:02d}:{seconds:02d}")
 
 
 def wait_for_process(pid: int, check_interval: int = 60):

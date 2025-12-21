@@ -64,8 +64,8 @@ INPUT_DIRS = [
     "data/iscxtor_split/train",
     "data/cic_iot_2022_split/train",
     "data/cross_platform_split/train",
-    "data/novpn_unified_split/train",
-    "data/vpn_unified_split/train",
+    "data/vpn_unified_output_split/train",
+    "data/novpn_unified_output_split/train",
     "data/iscxvpn_split/train",
     "data/ustc_split/train"
 ]
