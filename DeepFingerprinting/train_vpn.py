@@ -9,7 +9,9 @@ DeepFingerprinting VPN 训练脚本
 import os
 import sys
 import json
+import logging
 from pathlib import Path
+from datetime import datetime
 
 import numpy as np
 import torch
@@ -21,23 +23,68 @@ from Model_NoDef_pytorch import DFNoDefNet
 
 
 # =============================================================================
+# Logging Setup
+# =============================================================================
+
+def setup_logging(output_dir: Path) -> str:
+    """Setup logging to both console and file."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    log_filename = f"train_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    log_path = output_dir / log_filename
+
+    # Create logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+
+    # Remove existing handlers
+    logger.handlers = []
+
+    # File handler
+    file_handler = logging.FileHandler(log_path, encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter('%(message)s'))
+
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter('%(message)s'))
+
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+    return str(log_path)
+
+
+def log(message: str = ""):
+    """Log message to both console and file."""
+    logging.info(message)
+
+
+# =============================================================================
 # 配置
 # =============================================================================
 
 # 数据路径 (当前模型目录下的 vpn_data)
-DATA_DIR = Path(__file__).parent / "vpn_unified_output"
+# DATA_DIR = Path(__file__).parent / "vpn_unified_output"
+DATA_DIR = Path(__file__).parent / "novpn_unified_output"
 
 # 模型参数
 MAX_LEN = 5000  # 固定输入长度
 
 # 训练参数
-EPOCHS = 10
-BATCH_SIZE = 256
+EPOCHS = 100
+BATCH_SIZE = 1024
 LEARNING_RATE = 3e-4
 WEIGHT_DECAY = 1e-4
 TRAIN_RATIO = 0.8
 VAL_RATIO = 0.1
 SEED = 42
+
+# DataLoader 参数
+NUM_WORKERS = 8              # 数据加载进程数
+PREFETCH_FACTOR = 4          # 每个 worker 预取的 batch 数
+PERSISTENT_WORKERS = True    # 保持 worker 进程存活
 
 # 设备
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -65,13 +112,16 @@ class DFDataset(Dataset):
         flow = self.flows[idx]
         label = self.labels[idx]
 
+        # Ensure flow is numpy array
+        flow = np.asarray(flow, dtype=np.float32)
+
         # Pad/truncate to max_len
         if len(flow) >= self.max_len:
             flow = flow[:self.max_len]
         else:
             flow = np.pad(flow, (0, self.max_len - len(flow)), mode='constant')
 
-        return torch.FloatTensor(flow).unsqueeze(0), label  # (1, max_len)
+        return torch.from_numpy(flow).unsqueeze(0), int(label)  # (1, max_len)
 
 
 def load_npz_data(data_dir: Path):
@@ -148,9 +198,9 @@ def split_data(flows, labels, train_ratio, val_ratio, seed, min_samples=10):
         test_labels.extend([label] * len(test_idx))
 
     if removed_classes:
-        print(f"\n[Warning] 以下类别样本数不足 {min_samples}，已剔除:")
+        log(f"\n[Warning] 以下类别样本数不足 {min_samples}，已剔除:")
         for label, count in removed_classes:
-            print(f"  - 类别 {label}: {count} 个样本")
+            log(f"  - 类别 {label}: {count} 个样本")
 
     return (
         (train_flows, np.array(train_labels)),
@@ -216,22 +266,24 @@ def evaluate(model, loader, device):
 
 
 def main():
-    print("=" * 60)
-    print("DeepFingerprinting VPN Training")
-    print("=" * 60)
-    print(f"Data: {DATA_DIR}")
-    print(f"Device: {DEVICE}")
-    print(f"Max sequence length: {MAX_LEN}")
+    # Setup logging
+    log_path = setup_logging(OUTPUT_DIR)
 
-    # 创建输出目录
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    log("=" * 60)
+    log("DeepFingerprinting VPN Training")
+    log("=" * 60)
+    log(f"Data: {DATA_DIR}")
+    log(f"Device: {DEVICE}")
+    log(f"BATCH_SIZE: {BATCH_SIZE}")
+    log(f"Max sequence length: {MAX_LEN}")
+    log(f"Log file: {log_path}")
 
     # 加载数据
-    print("\nLoading data...")
+    log("\nLoading data...")
     flows, labels, id2label_orig = load_npz_data(DATA_DIR)
 
-    print(f"Total samples: {len(labels)}")
-    print(f"Original classes: {len(id2label_orig)}")
+    log(f"Total samples: {len(labels)}")
+    log(f"Original classes: {len(id2label_orig)}")
 
     # 划分数据（分层划分，剔除样本不足的类别）
     (train_flows, train_y), (val_flows, val_y), (test_flows, test_y), kept_classes = split_data(
@@ -248,21 +300,24 @@ def main():
     id2label = {new_label: id2label_orig[old_label] for old_label, new_label in old_to_new.items()}
     num_classes = len(kept_classes)
 
-    print(f"Kept classes: {num_classes}")
-    print(f"Split (stratified): train={len(train_y)}, val={len(val_y)}, test={len(test_y)}")
+    log(f"Kept classes: {num_classes}")
+    log(f"Split (stratified): train={len(train_y)}, val={len(val_y)}, test={len(test_y)}")
 
     # 创建 DataLoader
     train_loader = DataLoader(
         DFDataset(train_flows, train_y, MAX_LEN),
-        batch_size=BATCH_SIZE, shuffle=True, num_workers=0, pin_memory=True
+        batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS,
+        pin_memory=True, prefetch_factor=PREFETCH_FACTOR, persistent_workers=PERSISTENT_WORKERS
     )
     val_loader = DataLoader(
         DFDataset(val_flows, val_y, MAX_LEN),
-        batch_size=BATCH_SIZE, shuffle=False, num_workers=0, pin_memory=True
+        batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS,
+        pin_memory=True, prefetch_factor=PREFETCH_FACTOR, persistent_workers=PERSISTENT_WORKERS
     )
     test_loader = DataLoader(
         DFDataset(test_flows, test_y, MAX_LEN),
-        batch_size=BATCH_SIZE, shuffle=False, num_workers=0, pin_memory=True
+        batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS,
+        pin_memory=True, prefetch_factor=PREFETCH_FACTOR, persistent_workers=PERSISTENT_WORKERS
     )
 
     # 创建模型
@@ -273,27 +328,41 @@ def main():
     criterion = nn.CrossEntropyLoss()
     scaler = torch.amp.GradScaler('cuda')
 
-    print(f"\nModel: DFNoDefNet")
-    print(f"Training for {EPOCHS} epochs...")
-    print("-" * 60)
+    log(f"\nModel: DFNoDefNet")
+    log(f"Training for {EPOCHS} epochs...")
+    log("-" * 60)
 
     best_val_acc = 0
     best_model_path = OUTPUT_DIR / "df_vpn_best.pth"
+
+    # Training history
+    history = {
+        'train_loss': [],
+        'train_acc': [],
+        'val_acc': [],
+    }
 
     for epoch in range(1, EPOCHS + 1):
         train_loss, train_acc = train_epoch(model, train_loader, optimizer, criterion, device, scaler)
         val_acc, _, _ = evaluate(model, val_loader, device)
 
+        # Update history
+        history['train_loss'].append(train_loss)
+        history['train_acc'].append(train_acc)
+        history['val_acc'].append(val_acc)
+
+        marker = ""
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             torch.save(model.state_dict(), best_model_path)
+            marker = " *"
 
-        print(f"Epoch {epoch:3d} | Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} | Val Acc: {val_acc:.4f}")
+        log(f"Epoch {epoch:3d} | Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} | Val Acc: {val_acc:.4f}{marker}")
 
     # 测试
-    print("\n" + "=" * 60)
-    print("Test Results")
-    print("=" * 60)
+    log("\n" + "=" * 60)
+    log("Test Results")
+    log("=" * 60)
     model.load_state_dict(torch.load(best_model_path, weights_only=True))
     test_acc, preds, labels_arr = evaluate(model, test_loader, device)
 
@@ -302,18 +371,42 @@ def main():
     recall = recall_score(labels_arr, preds, average='macro', zero_division=0)
     f1 = f1_score(labels_arr, preds, average='macro', zero_division=0)
 
-    print(f"Test Accuracy:  {test_acc:.4f}")
-    print(f"Test Precision: {precision:.4f}")
-    print(f"Test Recall:    {recall:.4f}")
-    print(f"Test F1 Score:  {f1:.4f}")
+    log(f"Test Accuracy:  {test_acc:.4f}")
+    log(f"Test Precision: {precision:.4f}")
+    log(f"Test Recall:    {recall:.4f}")
+    log(f"Test F1 Score:  {f1:.4f}")
 
     # 打印分类报告
-    print("\n" + "-" * 60)
-    print("Classification Report:")
-    print("-" * 60)
+    log("\n" + "-" * 60)
+    log("Classification Report:")
+    log("-" * 60)
     labels_list = list(range(num_classes))
     target_names = [id2label[i] for i in labels_list]
-    print(classification_report(labels_arr, preds, labels=labels_list, target_names=target_names, zero_division=0))
+    log(classification_report(labels_arr, preds, labels=labels_list, target_names=target_names, zero_division=0))
+
+    # Save training history
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    history_path = OUTPUT_DIR / f"history_{timestamp}.json"
+    with open(history_path, 'w', encoding='utf-8') as f:
+        json.dump(history, f, indent=2)
+    log(f"Training history saved to {history_path}")
+
+    # Save final model with metadata
+    final_model_path = OUTPUT_DIR / "df_vpn_final.pth"
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'num_classes': num_classes,
+        'id2label': id2label,
+        'max_len': MAX_LEN,
+        'history': history,
+        'test_metrics': {
+            'accuracy': test_acc,
+            'precision': precision,
+            'recall': recall,
+            'f1': f1,
+        },
+    }, final_model_path)
+    log(f"Final model saved to {final_model_path}")
 
 
 if __name__ == "__main__":

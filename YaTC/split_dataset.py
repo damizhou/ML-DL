@@ -45,21 +45,22 @@ Usage:
 
 import os
 import json
+import time
 from pathlib import Path
 from typing import Dict, List, Tuple
 from collections import defaultdict
 
 import numpy as np
-
+from tensorflow.python.keras.combinations import times
 
 # ==================== 配置参数 ====================
 # 输入目录（包含 NPZ 文件和 labels.json）
 # INPUT_DIR = "data/iscxtor"
-INPUT_DIR = "data/iscxvpn"
+# INPUT_DIR = "data/iscxvpn"
 # INPUT_DIR = "data/cross_platform"
 # INPUT_DIR = "data/ustc"
 # INPUT_DIR = "data/novpn_unified_output"
-# INPUT_DIR = "data/vpn_unified_output"
+INPUT_DIR = "data/vpn_unified_output"
 # INPUT_DIR = "data/cic_iot_2022"
 
 # 输出目录（None 表示使用 <input>_split）
@@ -346,4 +347,7 @@ def main():
 
 
 if __name__ == "__main__":
+    import merge_datasets as merge
     main()
+    time.sleep(60)
+    merge.main()
