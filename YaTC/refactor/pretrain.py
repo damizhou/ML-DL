@@ -80,8 +80,9 @@ WARMUP_STEPS = 10000
 MASK_RATIO = 0.9
 
 # DataLoader 参数
-NUM_WORKERS = 4
-PREFETCH_FACTOR = 2
+NUM_WORKERS = 8              # 数据加载进程数
+PREFETCH_FACTOR = 4          # 每个 worker 预取的 batch 数
+PERSISTENT_WORKERS = True    # 保持 worker 进程存活
 
 # 保存频率
 SAVE_FREQ_STEPS = 10000
@@ -145,12 +146,16 @@ def main():
     )
 
     # Create dataloader
+    log("\nLoading dataset...")
     if USE_NPZ:
         dataloader = build_npz_pretrain_dataloader(
             DATA_PATH,
             batch_size=BATCH_SIZE,
             num_workers=NUM_WORKERS,
-            shuffle=True
+            shuffle=True,
+            prefetch_factor=PREFETCH_FACTOR,
+            persistent_workers=PERSISTENT_WORKERS,
+            log_fn=log
         )
     else:
         dataloader = build_pretrain_dataloader(

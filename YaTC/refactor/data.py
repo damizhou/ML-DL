@@ -424,35 +424,69 @@ class MFRNpzPretrainDataset(Dataset):
 
     Similar to MFRNpzDataset but doesn't require labels.
     Used for self-supervised pre-training.
+
+    Uses memory-mapped loading to avoid memory spikes during initialization.
     """
 
     def __init__(
         self,
         data_path: Union[str, Path],
-        transform: Optional[Callable] = None
+        transform: Optional[Callable] = None,
+        log_fn: Optional[Callable[[str], None]] = None
     ):
         """Initialize pre-training dataset from NPZ.
 
         Args:
             data_path: Path to directory containing NPZ files
             transform: Optional transform for images
+            log_fn: Optional logging function (default: print)
         """
         self.data_path = Path(data_path)
         self.transform = transform
+        self._log = log_fn if log_fn is not None else print
 
-        # Load all images from NPZ files
-        all_images = []
+        # 第一遍扫描：统计总样本数
+        self._log(f"Scanning NPZ files from {data_path}...")
+        self.npz_files = sorted(self.data_path.glob("*.npz"))
+        self._log(f"Found {len(self.npz_files)} NPZ files, scanning for sample counts...")
 
-        for npz_path in self.data_path.glob("*.npz"):
+        self.file_sample_counts = []
+        total_samples = 0
+
+        for i, npz_path in enumerate(self.npz_files):
             with np.load(npz_path, allow_pickle=True) as data:
                 if "images" in data:
-                    images = data["images"]  # (N, 40, 40)
-                    all_images.append(images)
+                    n = len(data["images"])
+                    self.file_sample_counts.append(n)
+                    total_samples += n
+                else:
+                    self.file_sample_counts.append(0)
 
-        if not all_images:
-            raise ValueError(f"No images found in {data_path}")
+            if (i + 1) % 100 == 0 or (i + 1) == len(self.npz_files):
+                self._log(f"  Scanned {i + 1}/{len(self.npz_files)} files ({total_samples} samples so far)")
 
-        self.images = np.vstack(all_images)
+        self._log(f"Scan complete: {total_samples} samples total")
+
+        # 预分配大数组，避免 vstack 的内存峰值
+        self._log(f"Pre-allocating array for {total_samples} samples...")
+        self.images = np.empty((total_samples, 40, 40), dtype=np.uint8)
+
+        # 第二遍加载：直接填充到预分配数组
+        self._log(f"Loading data into pre-allocated array...")
+        offset = 0
+        for i, npz_path in enumerate(self.npz_files):
+            n = self.file_sample_counts[i]
+            if n == 0:
+                continue
+
+            with np.load(npz_path, allow_pickle=True) as data:
+                self.images[offset:offset + n] = data["images"]
+            offset += n
+
+            if (i + 1) % 100 == 0 or (i + 1) == len(self.npz_files):
+                self._log(f"  Loaded {i + 1}/{len(self.npz_files)} files ({offset}/{total_samples} samples)")
+
+        self._log(f"Dataset ready: {len(self.images)} samples")
 
     def __len__(self) -> int:
         return len(self.images)
@@ -551,9 +585,12 @@ def build_finetune_dataloader(
 def build_npz_pretrain_dataloader(
     data_path: Union[str, Path],
     batch_size: int = 128,
-    num_workers: int = 4,
+    num_workers: int = 8,
     shuffle: bool = True,
-    transform: Optional[Callable] = None
+    transform: Optional[Callable] = None,
+    prefetch_factor: int = 4,
+    persistent_workers: bool = True,
+    log_fn: Optional[Callable[[str], None]] = None
 ) -> DataLoader:
     """Build dataloader for pre-training from NPZ files.
 
@@ -563,18 +600,23 @@ def build_npz_pretrain_dataloader(
         num_workers: Number of data loading workers
         shuffle: Whether to shuffle data
         transform: Optional transform
+        prefetch_factor: Number of batches to prefetch per worker
+        persistent_workers: Keep worker processes alive between epochs
+        log_fn: Optional logging function (default: print)
 
     Returns:
         DataLoader for pre-training
     """
-    dataset = MFRNpzPretrainDataset(data_path, transform=transform)
+    dataset = MFRNpzPretrainDataset(data_path, transform=transform, log_fn=log_fn)
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=True,
-        drop_last=True
+        drop_last=True,
+        prefetch_factor=prefetch_factor if num_workers > 0 else None,
+        persistent_workers=persistent_workers if num_workers > 0 else False
     )
     return dataloader
 
