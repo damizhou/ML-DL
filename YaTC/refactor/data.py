@@ -419,6 +419,85 @@ class MFRNpzDataset(Dataset):
         return img_tensor, label
 
 
+class MFRNpzSplitDataset(Dataset):
+    """Dataset for MFR images from pre-split NPZ directories.
+
+    Loads MFR images from split_dataset.py output:
+    data_path/
+    ├── labels.json      # {"label2id": {...}, "id2label": {...}}
+    ├── class1.npz       # {"images": (N, 40, 40)}
+    └── class2.npz
+
+    Unlike MFRNpzDataset, this class loads from a single split directory
+    without performing runtime splitting.
+    """
+
+    def __init__(
+        self,
+        data_path: Union[str, Path],
+        transform: Optional[Callable] = None,
+        target_transform: Optional[Callable] = None
+    ):
+        """Initialize split dataset.
+
+        Args:
+            data_path: Path to split directory (e.g., data/xxx_split/train)
+            transform: Optional transform for images
+            target_transform: Optional transform for labels
+        """
+        self.data_path = Path(data_path)
+        self.transform = transform
+        self.target_transform = target_transform
+
+        # Load label mapping
+        labels_json = self.data_path / "labels.json"
+        with open(labels_json, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+
+        self.label2id = meta["label2id"]
+        self.id2label = {int(k): v for k, v in meta["id2label"].items()}
+        self.classes = list(self.label2id.keys())
+        self.num_classes = len(self.classes)
+
+        # Load all images and labels
+        all_images = []
+        all_labels = []
+
+        for label_name, label_id in self.label2id.items():
+            npz_path = self.data_path / f"{label_name}.npz"
+            if not npz_path.exists():
+                continue
+
+            with np.load(npz_path, allow_pickle=True) as data:
+                images = data["images"]  # (N, 40, 40)
+                all_images.append(images)
+                all_labels.extend([label_id] * len(images))
+
+        if not all_images:
+            raise ValueError(f"No images found in {data_path}")
+
+        self.images = np.vstack(all_images)
+        self.labels = np.array(all_labels)
+
+    def __len__(self) -> int:
+        return len(self.labels)
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
+        """Get sample by index."""
+        img = self.images[idx].astype(np.float32) / 255.0
+        label = int(self.labels[idx])
+
+        img_tensor = torch.from_numpy(img).unsqueeze(0)
+
+        if self.transform is not None:
+            img_tensor = self.transform(img_tensor)
+
+        if self.target_transform is not None:
+            label = self.target_transform(label)
+
+        return img_tensor, label
+
+
 class MFRNpzPretrainDataset(Dataset):
     """Dataset for MAE pre-training from NPZ files.
 
@@ -669,5 +748,42 @@ def build_npz_finetune_dataloader(
         num_workers=num_workers,
         pin_memory=True,
         drop_last=(split == 'train')
+    )
+    return dataloader, dataset.num_classes
+
+
+def build_split_dataloader(
+    data_path: Union[str, Path],
+    batch_size: int = 128,
+    num_workers: int = 4,
+    shuffle: bool = True,
+    transform: Optional[Callable] = None,
+    target_transform: Optional[Callable] = None
+) -> Tuple[DataLoader, int]:
+    """Build dataloader for pre-split NPZ directory.
+
+    Args:
+        data_path: Path to split directory (e.g., data/xxx_split/train)
+        batch_size: Batch size
+        num_workers: Number of data loading workers
+        shuffle: Whether to shuffle data
+        transform: Optional transform for images
+        target_transform: Optional transform for labels
+
+    Returns:
+        Tuple of (DataLoader, num_classes)
+    """
+    dataset = MFRNpzSplitDataset(
+        data_path,
+        transform=transform,
+        target_transform=target_transform
+    )
+    dataloader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=shuffle  # drop_last only when shuffling (training)
     )
     return dataloader, dataset.num_classes

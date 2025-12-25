@@ -72,11 +72,13 @@ DATA_PATH = Path(__file__).parent.parent / "data" / "merged_pretrain"
 OUTPUT_DIR = Path(__file__).parent.parent / "checkpoints"
 
 # 训练参数
-BATCH_SIZE = 128
+# 论文原参数: batch_size=512, steps=150000 (约500万样本，每样本约15次)
+# 当前数据集约2000万样本，调整为60万步以保持每样本约15次访问
+BATCH_SIZE = 256
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 0.05
-TOTAL_STEPS = 150000
-WARMUP_STEPS = 10000
+TOTAL_STEPS = 1200000
+WARMUP_STEPS = 40000
 MASK_RATIO = 0.9
 
 # DataLoader 参数
@@ -85,8 +87,8 @@ PREFETCH_FACTOR = 4          # 每个 worker 预取的 batch 数
 PERSISTENT_WORKERS = True    # 保持 worker 进程存活
 
 # 保存频率
-SAVE_FREQ_STEPS = 10000
-PRINT_FREQ = 100
+SAVE_FREQ_STEPS = 50000   # 每5万步保存一次 (共保存约12个checkpoint)
+PRINT_FREQ = 500          # 每500步打印一次 (总共约1200次打印)
 
 # 数据格式
 USE_NPZ = True  # True: NPZ 格式, False: PNG 图像
@@ -198,17 +200,19 @@ def main():
             print_freq=PRINT_FREQ
         )
 
-        step += steps_per_epoch
+        # 使用实际完成的步数
+        steps_done = metrics.get('steps_done', len(dataloader))
+        step += steps_done
 
         # Update history
         history['step'].append(step)
         history['loss'].append(metrics['loss'])
         history['lr'].append(metrics.get('lr', LEARNING_RATE))
 
-        log(f"Epoch {epoch+1:3d} | Step {step:6d} | Loss: {metrics['loss']:.4f}")
+        log(f"Epoch {epoch+1:3d} | Step {step:6d}/{TOTAL_STEPS} | Loss: {metrics['loss']:.4f}")
 
         # Save checkpoint periodically
-        if step % SAVE_FREQ_STEPS < steps_per_epoch:
+        if step >= TOTAL_STEPS or (step % SAVE_FREQ_STEPS < steps_done):
             checkpoint_path = OUTPUT_DIR / f'pretrain_step{step:06d}.pth'
             save_checkpoint(
                 model=model,

@@ -30,7 +30,7 @@ from sklearn.metrics import classification_report
 
 from config import DEFAULT_FINETUNE_CONFIG
 from models import traformer_yatc
-from data import build_finetune_dataloader, build_npz_finetune_dataloader
+from data import build_finetune_dataloader, build_npz_finetune_dataloader, build_split_dataloader
 from engine import (
     train_one_epoch,
     evaluate,
@@ -81,6 +81,12 @@ def log(message: str = ""):
 # 数据路径
 DATA_PATH = Path(__file__).parent.parent / "data" / "iscxvpn"
 
+# 是否使用已划分的目录结构 (train/val/test 子目录)
+USE_SPLIT_DIR = False
+TRAIN_PATH = None  # 由 finetune_all.py 设置
+VAL_PATH = None
+TEST_PATH = None
+
 # 预训练模型路径 (None 表示从头训练)
 PRETRAINED_PATH = Path(__file__).parent.parent / "checkpoints" / "pretrained.pth"
 
@@ -97,7 +103,7 @@ LAYER_DECAY = 0.65
 DROP_PATH_RATE = 0.1
 LABEL_SMOOTHING = 0.1
 
-# 数据划分
+# 数据划分 (仅在 USE_SPLIT_DIR=False 时使用)
 TRAIN_RATIO = 0.8
 VAL_RATIO = 0.1
 MIN_SAMPLES = 10  # 每个类别最小样本数
@@ -136,7 +142,29 @@ def main():
         torch.backends.cudnn.benchmark = True
 
     # Create dataloaders
-    if USE_NPZ:
+    if USE_SPLIT_DIR and TRAIN_PATH and VAL_PATH and TEST_PATH:
+        # 使用已划分的目录结构
+        train_loader, num_classes = build_split_dataloader(
+            TRAIN_PATH,
+            batch_size=BATCH_SIZE,
+            num_workers=NUM_WORKERS,
+            shuffle=True
+        )
+        val_loader, _ = build_split_dataloader(
+            VAL_PATH,
+            batch_size=BATCH_SIZE,
+            num_workers=NUM_WORKERS,
+            shuffle=False
+        )
+        test_loader, _ = build_split_dataloader(
+            TEST_PATH,
+            batch_size=BATCH_SIZE,
+            num_workers=NUM_WORKERS,
+            shuffle=False
+        )
+        id2label = test_loader.dataset.id2label
+    elif USE_NPZ:
+        # 运行时划分
         train_loader, num_classes = build_npz_finetune_dataloader(
             DATA_PATH,
             split='train',
@@ -289,7 +317,7 @@ def main():
 
         # Update history
         history['train_loss'].append(train_metrics['loss'])
-        history['train_acc'].append(train_metrics['accuracy'])
+        history['train_acc'].append(train_metrics['acc'])
         history['val_acc'].append(val_metrics['accuracy'])
         history['val_f1'].append(val_metrics['f1'])
 
@@ -308,7 +336,7 @@ def main():
             marker = " *"
 
         log(f"Epoch {epoch+1:3d} | Train Loss: {train_metrics['loss']:.4f} | "
-            f"Train Acc: {train_metrics['accuracy']:.4f} | "
+            f"Train Acc: {train_metrics['acc']:.4f} | "
             f"Val Acc: {val_metrics['accuracy']:.4f} | "
             f"Val F1: {val_metrics['f1']:.4f}{marker}")
 

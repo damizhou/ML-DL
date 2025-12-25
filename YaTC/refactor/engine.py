@@ -215,13 +215,19 @@ def pretrain_one_epoch(
         print_freq: Print frequency
 
     Returns:
-        Dictionary of training metrics
+        Dictionary of training metrics (includes 'steps_done' for actual steps completed)
     """
     model.train()
     loss_meter = AverageMeter()
+    lr = base_lr
+    steps_done = 0
 
     for batch_idx, samples in enumerate(data_loader):
         step = step_offset + batch_idx
+
+        # 检查是否达到总步数
+        if step >= total_steps:
+            break
 
         # Adjust learning rate
         lr = adjust_learning_rate_pretrain(
@@ -241,17 +247,19 @@ def pretrain_one_epoch(
 
         # Update metrics
         loss_meter.update(loss.item(), samples.size(0))
+        steps_done += 1
 
         # Print progress
         if batch_idx % print_freq == 0:
             print(
-                f"Epoch [{epoch}] Step [{step}/{total_steps}] "
+                f"Epoch [{epoch}] Step [{step + 1}/{total_steps}] "
                 f"Loss: {loss_meter.avg:.4f} LR: {lr:.6f}"
             )
 
     return {
         "loss": loss_meter.avg,
-        "lr": lr
+        "lr": lr,
+        "steps_done": steps_done
     }
 
 
