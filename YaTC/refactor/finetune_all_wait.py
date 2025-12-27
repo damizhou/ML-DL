@@ -18,11 +18,11 @@ from datetime import datetime
 
 # 数据集列表（指向 _split 目录）
 DATASETS = [
-    # "data/iscxvpn_split",           # ISCXVPN2016
-    # "data/iscxtor_split",              # ISCXTor2016
-    # "data/ustc_split",                 # USTC-TFC2016
-    # "data/cic_iot_2022_split",         # CICIoT2022
-    # "data/cross_platform_split",       # Cross-platform
+    "data/iscxvpn_split",           # ISCXVPN2016
+    "data/iscxtor_split",              # ISCXTor2016
+    "data/ustc_split",                 # USTC-TFC2016
+    "data/cic_iot_2022_split",         # CICIoT2022
+    "data/cross_platform_split",       # Cross-platform
     "data/vpn_unified_output_split",   # VPN unified
     "data/novpn_unified_output_split", # NoVPN unified
 ]

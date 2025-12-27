@@ -79,7 +79,7 @@ def log(message: str = ""):
 # =============================================================================
 
 # 数据路径
-DATA_PATH = Path(__file__).parent.parent / "data" / "iscxvpn"
+DATA_PATH = Path(__file__).parent.parent / "data" / "vpn_unified_output_split"
 
 # 是否使用已划分的目录结构 (train/val/test 子目录)
 USE_SPLIT_DIR = False
@@ -94,7 +94,7 @@ PRETRAINED_PATH = Path(__file__).parent.parent / "checkpoints" / "pretrained.pth
 OUTPUT_DIR = Path(__file__).parent.parent / "checkpoints"
 
 # 训练参数
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 LEARNING_RATE = 2e-3
 WEIGHT_DECAY = 0.05
 EPOCHS = 200
