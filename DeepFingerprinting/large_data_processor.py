@@ -82,12 +82,15 @@ def load_npz_directory(
 
         try:
             with np.load(npz_path, allow_pickle=True) as data:
-                if 'sequences' not in data:
-                    print(f"  [跳过] {label_name}: NPZ 中无 'sequences' 键")
-                    skipped_classes.append((label_name, 0, "无 sequences 键"))
+                # 支持两种键名: 'flows' (DF格式) 或 'sequences' (FS-Net格式)
+                if 'flows' in data:
+                    sequences = data['flows']
+                elif 'sequences' in data:
+                    sequences = data['sequences']
+                else:
+                    print(f"  [跳过] {label_name}: NPZ 中无 'flows' 或 'sequences' 键 (有: {list(data.keys())})")
+                    skipped_classes.append((label_name, 0, "无 flows/sequences 键"))
                     continue
-
-                sequences = data['sequences']
 
                 # Convert to list if needed
                 if sequences.dtype == object:
@@ -99,13 +102,15 @@ def load_npz_directory(
                     skipped_classes.append((label_name, len(sequences), f"样本数 < {min_samples}"))
                     continue
 
-                # Ensure each sequence is numpy array
-                sequences = [np.asarray(s, dtype=np.int16) for s in sequences]
-
-                # 转换为方向序列 (±1): sign(length) -> direction
-                # FS-Net 格式: ±长度 (1~1500)
-                # DF 格式: ±1 (方向)
-                sequences = [np.sign(s).astype(np.int8) for s in sequences]
+                # 确保每个序列是 int8 类型
+                # 'flows' 键已经是 ±1 方向序列 (int8)
+                # 'sequences' 键是 ±长度 (int16)，需要转换为方向
+                if 'flows' in data:
+                    # DF 格式: 已经是 ±1，直接转为 int8
+                    sequences = [np.asarray(s, dtype=np.int8) for s in sequences]
+                else:
+                    # FS-Net 格式: ±长度 -> ±1 方向
+                    sequences = [np.sign(s).astype(np.int8) for s in sequences]
 
                 all_sequences.extend(sequences)
                 all_labels.extend([label_id] * len(sequences))
@@ -223,12 +228,14 @@ def main():
         "--input", "-i",
         type=str,
         default="./data/vpn_unified_output",
+        # default="./data/vpn_unified_output",
         help="输入目录 (unified_vpn_processor 输出)"
     )
     parser.add_argument(
         "--output", "-o",
         type=str,
         default="./data/vpn",
+        # default="./data/vpn",
         help="输出目录 (包含 data.npz 和 labels.json)"
     )
     parser.add_argument(
