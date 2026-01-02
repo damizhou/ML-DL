@@ -72,21 +72,21 @@ class TrainArgs:
     mode: str = 'train'
 
     # Data path (supports unified_dir and single_npz formats)
-    # data_path: str = './data/vpn'             # unified_dir: 多个 .npz 文件
-    # data_path: str = './data/novpn'           # unified_dir: 多个 .npz 文件
-    # data_path: str = './data/iscxtor'         # single_npz: data.npz + labels.json
-    # data_path: str = './data/ustc'            # single_npz: data.npz + labels.json
-    # data_path: str = './data/cic_iot_2022'    # single_npz: data.npz + labels.json
-    # data_path: str = './data/cross_platform'  # single_npz: data.npz + labels.json
-    data_path: str = './data/iscxtor'
+    # data_path: str = '/root/autodl-tmp/data/iscxvpn'         # single_npz: data.npz + labels.json
+    # data_path: str = '/root/autodl-tmp/data/iscxtor'         # single_npz: data.npz + labels.json
+    # data_path: str = '/root/autodl-tmp/data/ustc'            # single_npz: data.npz + labels.json
+    # data_path: str = '/root/autodl-tmp/data/cic_iot_2022'    # single_npz: data.npz + labels.json
+    # data_path: str = '/root/autodl-tmp/data/cross_platform'  # single_npz: data.npz + labels.json
+    data_path: str = '/root/autodl-tmp/data/vpn'             # unified_dir: 多个 .npz 文件
+    # data_path: str = '/root/autodl-tmp/data/novpn'           # unified_dir: 多个 .npz 文件
 
     # Model configuration (Paper Section 5.1, Table 1)
     input_len: int = 5000                       # Fixed input length (Paper: 5000)
     num_classes: Optional[int] = None           # Auto-detect from data
 
     # Training parameters (Paper Table 1)
-    epochs: int = 30                            # Paper: 30
-    batch_size: int = 128                       # Paper: 128
+    epochs: int = 100                            # Paper: 30
+    batch_size: int = 2048                       # Paper: 128
     lr: float = 0.002                           # Paper: 0.002
     optimizer: str = 'adamax'                   # Paper: Adamax
 
@@ -107,7 +107,7 @@ class TrainArgs:
 
     # Misc
     seed: int = 42
-    num_workers: int = 0                        # Windows compatible
+    num_workers: int = 4                        # Windows compatible
 
 
 def get_args() -> TrainArgs:
@@ -128,9 +128,15 @@ def set_seed(seed: int):
 # =============================================================================
 
 class DFDataset(Dataset):
-    """Deep Fingerprinting Dataset."""
+    """Deep Fingerprinting Dataset - 惰性加载模式，支持大数据集。"""
 
     def __init__(self, sequences: List[np.ndarray], labels: np.ndarray, max_len: int = 5000):
+        """
+        Args:
+            sequences: 变长序列列表 (保持原始格式，不预处理)
+            labels: 标签数组
+            max_len: 固定序列长度
+        """
         self.sequences = sequences
         self.labels = labels
         self.max_len = max_len
@@ -140,17 +146,13 @@ class DFDataset(Dataset):
 
     def __getitem__(self, idx):
         seq = self.sequences[idx]
+        seq_len = min(len(seq), self.max_len)
 
-        # Pad or truncate to fixed length
-        if len(seq) >= self.max_len:
-            seq = seq[:self.max_len]
-        else:
-            seq = np.pad(seq, (0, self.max_len - len(seq)), mode='constant', constant_values=0)
+        # 即时处理：pad/truncate + 转换
+        x = np.zeros(self.max_len, dtype=np.float32)
+        x[:seq_len] = seq[:seq_len].astype(np.float32)
 
-        # Convert to float32 tensor
-        x = torch.from_numpy(seq.astype(np.float32))
-        y = torch.tensor(self.labels[idx], dtype=torch.long)
-        return x, y
+        return torch.from_numpy(x), torch.tensor(self.labels[idx], dtype=torch.long)
 
 
 def load_unified_dir(data_path: Path) -> Tuple[List[np.ndarray], np.ndarray, Dict[int, str]]:
@@ -270,13 +272,19 @@ def create_dataloaders(sequences: List, labels: np.ndarray, args: TrainArgs) -> 
 
     log(f"Split: train={len(train_labels)}, val={len(val_labels)}, test={len(test_labels)}")
 
+    # 创建数据集 (惰性加载模式)
+    log("Creating datasets (lazy loading mode for large dataset)...")
     train_dataset = DFDataset(train_seqs, train_labels, args.input_len)
     val_dataset = DFDataset(val_seqs, val_labels, args.input_len)
     test_dataset = DFDataset(test_seqs, test_labels, args.input_len)
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=True)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=True)
+    # 使用多 workers 加速数据加载
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,
+                              num_workers=args.num_workers, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False,
+                            num_workers=args.num_workers, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False,
+                             num_workers=args.num_workers, pin_memory=True)
 
     return train_loader, val_loader, test_loader
 
@@ -439,7 +447,7 @@ def mode_train(args: TrainArgs):
         class_name = label_map.get(label_id, f"Class_{label_id}")
         log(f"  [{label_id:3d}] {class_name:25s}: {count:6d} ({count/len(labels)*100:5.1f}%)")
 
-    # Create dataloaders
+    # Create dataloaders (惰性加载模式)
     log(f"\nCreating dataloaders...")
     train_loader, val_loader, test_loader = create_dataloaders(sequences, labels, args)
 
@@ -477,8 +485,12 @@ def mode_train(args: TrainArgs):
     history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': [], 'val_f1': []}
 
     for epoch in range(1, args.epochs + 1):
+        epoch_start = datetime.now()
+
         train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device, scaler)
         val_metrics = evaluate(model, val_loader, device, num_classes)
+
+        epoch_time = (datetime.now() - epoch_start).total_seconds()
 
         history['train_loss'].append(train_loss)
         history['train_acc'].append(train_acc)
@@ -499,7 +511,8 @@ def mode_train(args: TrainArgs):
             }, os.path.join(args.output_dir, 'best_model.pth'))
 
         log(f"Epoch {epoch:3d} | Train Loss: {train_loss:.4f} Acc: {train_acc:.4f} | "
-            f"Val Acc: {val_metrics['accuracy']:.4f} F1: {val_metrics['f1']:.4f} {'*' if is_best else ''}")
+            f"Val Acc: {val_metrics['accuracy']:.4f} F1: {val_metrics['f1']:.4f} | "
+            f"Time: {epoch_time:.1f}s {'*' if is_best else ''}")
 
     # Load best model for final evaluation
     log("\n" + "=" * 70)

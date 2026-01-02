@@ -42,14 +42,14 @@ except ImportError:
 # Configuration - Modify these settings
 # =============================================================================
 # Input paths - modify these to match your dataset location
-LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-Tor-NonTor-2017/label_map.csv"
-VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-Tor-NonTor-2017/service_vocab.csv"
+LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/USTC-TFC2016/label_map.csv"
+VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/USTC-TFC2016/service_vocab.csv"
 
 # Output path
-OUTPUT_DIR = './data/iscxtor'
+OUTPUT_DIR = './data/ustc'
 
 # Dataset name (for metadata)
-DATASET_NAME = 'ISCXVPN2016'
+DATASET_NAME = 'USTC-TFC'
 
 # Flow extraction parameters (consistent with unified_novpn_processor.py)
 MIN_PACKETS = 20          # Minimum packets per flow
@@ -323,7 +323,7 @@ def load_vocab(csv_path: str) -> Dict[int, str]:
     with open(csv_path, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            vocab[int(row['service_id'])] = row['service']
+            vocab[int(row['id'])] = row['name']
     return vocab
 
 
