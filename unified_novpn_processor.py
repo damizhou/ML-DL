@@ -83,7 +83,7 @@ def wait_for_memory(threshold: float = 0.8, check_interval: float = 1.0, max_wai
 class Config:
     """统一配置"""
     # 输入输出
-    root: Path = Path("/netdisk/dataset/novpn/data")
+    root: Path = Path("/mnt/netdisk/dataset/novpn/data")
     output: Path = Path(".")  # 项目根目录，数据将放到各模型的 vpn_data/ 子目录
 
     # 并行处理
@@ -564,7 +564,7 @@ def save_model_data(
 
 def main():
     parser = argparse.ArgumentParser(description="统一 VPN 数据处理脚本")
-    parser.add_argument("--root", type=str, default="/netdisk/dataset/novpn/data",
+    parser.add_argument("--root", type=str, default="/mnt/netdisk/dataset/novpn/data",
                         help="VPN 数据集根目录")
     parser.add_argument("--output", type=str, default="./novpn_unified_output",
                         help="输出目录")
