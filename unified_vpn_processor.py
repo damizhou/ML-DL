@@ -87,7 +87,7 @@ class Config:
     output: Path = Path(".")  # 项目根目录，数据将放到各模型的 vpn_data/ 子目录
 
     # 并行处理
-    max_procs: int = 16
+    max_procs: int = 8
     memory_limit: float = 0.8  # 内存使用率阈值 (80%)
 
     # 通用过滤
@@ -99,9 +99,9 @@ class Config:
     fsnet_max_seq_len: int = 100
     fsnet_max_pkt_len: int = 1500
 
-    # DeepFingerprinting 参数
-    df_min_pkts: int = 20
-    df_max_seq_len: int = 5000
+    # DeepFingerprinting 参数 (Paper: CCS 2018)
+    df_min_pkts: int = 50       # Paper Section 4: "too short – less than 50 packets"
+    df_max_seq_len: int = 5000  # Paper Section 5.1: "5,000 cells provide the best results"
 
     # AppScanner 参数
     appscanner_min_pkts: int = 7
