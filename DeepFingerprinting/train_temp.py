@@ -1,17 +1,18 @@
 """
-Deep Fingerprinting Training Script
+临时训练脚本 - 等待 train.py 结束后自动执行
 
-Paper: Deep Fingerprinting: Undermining Website Fingerprinting Defenses with Deep Learning
-Conference: CCS 2018
+功能：每 10 分钟检查 train.py 是否还在运行，结束后自动开始训练。
 
 Usage:
-    python train.py
+    python train_temp.py
 """
 
 import os
 import sys
 import json
 import logging
+import subprocess
+import time
 import numpy as np
 import torch
 import torch.nn as nn
@@ -24,6 +25,57 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
 
 from Model_NoDef_pytorch import DFNoDefNet
+
+
+# =============================================================================
+# 进程监控功能
+# =============================================================================
+
+def is_train_running() -> bool:
+    """检查 train.py 是否正在运行（排除自己 train_temp.py）"""
+    try:
+        # Linux: 使用 pgrep 查找进程
+        result = subprocess.run(
+            ['pgrep', '-af', 'python'],
+            capture_output=True,
+            text=True
+        )
+        lines = result.stdout.strip().split('\n')
+        for line in lines:
+            # 匹配 train.py 但排除 train_temp.py
+            if 'train.py' in line and 'train_temp.py' not in line:
+                return True
+        return False
+    except FileNotFoundError:
+        # Windows fallback
+        result = subprocess.run(
+            ['tasklist', '/FI', 'IMAGENAME eq python.exe', '/FO', 'CSV'],
+            capture_output=True,
+            text=True
+        )
+        return 'python' in result.stdout.lower()
+
+
+def wait_for_train_to_finish(check_interval: int = 600):
+    """
+    等待 train.py 结束
+
+    Args:
+        check_interval: 检查间隔（秒），默认 600 秒 = 10 分钟
+    """
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 开始监控 train.py 进程...")
+    print(f"检查间隔: {check_interval // 60} 分钟")
+    print("-" * 50)
+
+    while True:
+        if is_train_running():
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] train.py 正在运行，{check_interval // 60} 分钟后再次检查...")
+            time.sleep(check_interval)
+        else:
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] train.py 已结束！")
+            break
+
+    print("-" * 50)
 
 
 # =============================================================================
@@ -72,12 +124,12 @@ class TrainArgs:
     mode: str = 'train'
 
     # Data path (supports unified_dir and single_npz formats)
-    data_path: str = '/root/autodl-tmp/data/iscxvpn'         # single_npz: data.npz + labels.json
+    # data_path: str = '/root/autodl-tmp/data/iscxvpn'         # single_npz: data.npz + labels.json
     # data_path: str = '/root/autodl-tmp/data/iscxtor'         # single_npz: data.npz + labels.json
     # data_path: str = '/root/autodl-tmp/data/ustc'            # single_npz: data.npz + labels.json
     # data_path: str = '/root/autodl-tmp/data/cic_iot_2022'    # single_npz: data.npz + labels.json
     # data_path: str = '/root/autodl-tmp/data/cross_platform'  # single_npz: data.npz + labels.json
-    # data_path: str = '/root/autodl-tmp/data/vpn'             # unified_dir: 多个 .npz 文件
+    data_path: str = '/root/autodl-tmp/data/vpn'             # unified_dir: 多个 .npz 文件
     # data_path: str = '/root/autodl-tmp/data/novpn'           # unified_dir: 多个 .npz 文件
 
     # Model configuration (Paper Section 5.1, Table 1)
@@ -99,7 +151,7 @@ class TrainArgs:
     min_samples: int = 10                       # Minimum samples per class
 
     # Paths
-    output_dir: str = './output'
+    output_dir: str = './output_temp'           # 使用不同的输出目录
     checkpoint: Optional[str] = None
 
     # Device
@@ -412,7 +464,7 @@ def evaluate(model: nn.Module, loader: DataLoader, device: torch.device,
 def mode_train(args: TrainArgs):
     """Training mode."""
     log("=" * 70)
-    log("Deep Fingerprinting Training")
+    log("Deep Fingerprinting Training (train_temp.py)")
     log("Paper: CCS 2018")
     log("=" * 70)
 
@@ -582,62 +634,6 @@ def mode_train(args: TrainArgs):
 
 
 # =============================================================================
-# Evaluation Mode
-# =============================================================================
-
-def mode_eval(args: TrainArgs):
-    """Evaluation mode."""
-    log("=" * 70)
-    log("Deep Fingerprinting Evaluation")
-    log("=" * 70)
-
-    # Device
-    if args.device == 'auto':
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    else:
-        device = torch.device(args.device)
-    log(f"Device: {device}")
-
-    # Checkpoint path
-    if args.checkpoint is None:
-        args.checkpoint = os.path.join(args.output_dir, 'best_model.pth')
-
-    log(f"Loading checkpoint: {args.checkpoint}")
-    checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
-
-    num_classes = checkpoint['num_classes']
-    label_map = checkpoint['label_map']
-
-    # Load data
-    sequences, labels, _ = load_dataset(args.data_path)
-    sequences, labels, label_map = filter_classes(sequences, labels, label_map, args.min_samples)
-
-    # Use all data for testing
-    test_dataset = DFDataset(sequences, labels, args.input_len)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
-
-    # Create and load model
-    model = DFNoDefNet(num_classes=num_classes)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    model = model.to(device)
-
-    # Evaluate
-    test_metrics = evaluate(model, test_loader, device, num_classes)
-
-    log("\n" + "=" * 70)
-    log("TEST RESULTS")
-    log("=" * 70)
-    log(f"Accuracy:  {test_metrics['accuracy']:.4f}")
-    log(f"Precision: {test_metrics['precision']:.4f}")
-    log(f"Recall:    {test_metrics['recall']:.4f}")
-    log(f"F1 Score:  {test_metrics['f1']:.4f}")
-    log(f"TPR_AVE:   {test_metrics['tpr_avg']:.4f}")
-    log(f"FPR_AVE:   {test_metrics['fpr_avg']:.4f}")
-
-    return test_metrics
-
-
-# =============================================================================
 # Main
 # =============================================================================
 
@@ -660,8 +656,6 @@ def main():
 
     if args.mode == 'train':
         mode_train(args)
-    elif args.mode == 'eval':
-        mode_eval(args)
 
     end_time = datetime.now()
     elapsed_time = end_time - start_time
@@ -675,4 +669,12 @@ def main():
 
 
 if __name__ == '__main__':
+    # 1. 等待 train.py 结束
+    wait_for_train_to_finish(check_interval=600)  # 10 分钟
+
+    # 2. 执行训练
+    print("\n" + "=" * 70)
+    print("开始执行 train_temp.py 训练任务")
+    print("=" * 70 + "\n")
+
     main()

@@ -51,10 +51,10 @@ OUTPUT_DIR = './data/ustc'
 # Dataset name (for metadata)
 DATASET_NAME = 'USTC-TFC'
 
-# Flow extraction parameters (consistent with unified_novpn_processor.py)
-MIN_PACKETS = 20          # Minimum packets per flow
-MAX_PACKETS = 5000        # Maximum packets per flow (DF model input length)
-FLOW_TIMEOUT = 60.0       # Flow timeout in seconds
+# Flow extraction parameters (Paper Section 4: Data Collection)
+MIN_PACKETS = 50          # Minimum packets per flow (Paper: "too short – less than 50 packets")
+MAX_PACKETS = 5000        # Maximum packets per flow (Paper Section 5.1: "5,000 cells provide the best results")
+FLOW_TIMEOUT = 60.0       # Flow timeout in seconds (for splitting long connections)
 PAYLOAD_ONLY = True       # Only count packets with payload (skip SYN/ACK/FIN without data)
 
 # Random seed
