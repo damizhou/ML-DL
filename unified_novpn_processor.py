@@ -466,10 +466,10 @@ def process_single_pcap(args: Tuple[str, str, Config]) -> Tuple[str, str, FlowFe
         packet_count = sum(len(pkts) for pkts in flows.values())
 
         # 提取四种特征
-        features.fsnet = extract_fsnet_features(flows, config)
+        # features.fsnet = extract_fsnet_features(flows, config)
         features.df = extract_df_features(flows, config)
-        features.appscanner = extract_appscanner_features(flows, config)
-        features.yatc = extract_yatc_features(flows, config)
+        # features.appscanner = extract_appscanner_features(flows, config)
+        # features.yatc = extract_yatc_features(flows, config)
 
         # 记录当前进程内存
         memory_mb = proc.memory_info().rss / (1024 * 1024)
@@ -628,11 +628,12 @@ def main():
     # 格式: <project_root>/<ModelName>/<output_subdir>/
     project_root = config.output.parent if config.output.name != "." else config.output
     output_subdir = config.output.name if config.output.name != "." else "novpn_unified_output"
+    # 只处理 DeepFingerprinting
     OUTPUT_DIRS = {
-        "fsnet": project_root / "FS-Net" / output_subdir,
+        # "fsnet": project_root / "FS-Net" / output_subdir,
         "deepfingerprinting": project_root / "DeepFingerprinting" / output_subdir,
-        "appscanner": project_root / "AppScanner" / output_subdir,
-        "yatc": project_root / "YaTC" / "data" / output_subdir,
+        # "appscanner": project_root / "AppScanner" / output_subdir,
+        # "yatc": project_root / "YaTC" / "data" / output_subdir,
     }
 
     # 创建各模型输出目录
@@ -733,14 +734,14 @@ def main():
 
         saved_any = False
 
-        # FS-Net
-        if len(fsnet_list) >= MIN_SAMPLES:
-            out_path = OUTPUT_DIRS["fsnet"] / f"{lbl}.npz"
-            np.savez_compressed(out_path, sequences=np.array(fsnet_list, dtype=object), label=lbl, label_id=lbl_id)
-            fsnet_count += len(fsnet_list)
-            saved_any = True
-        elif fsnet_list:
-            tqdm.write(f"    [跳过] {lbl} FS-Net: 样本数 {len(fsnet_list)} < {MIN_SAMPLES}")
+        # FS-Net (已禁用)
+        # if len(fsnet_list) >= MIN_SAMPLES:
+        #     out_path = OUTPUT_DIRS["fsnet"] / f"{lbl}.npz"
+        #     np.savez_compressed(out_path, sequences=np.array(fsnet_list, dtype=object), label=lbl, label_id=lbl_id)
+        #     fsnet_count += len(fsnet_list)
+        #     saved_any = True
+        # elif fsnet_list:
+        #     tqdm.write(f"    [跳过] {lbl} FS-Net: 样本数 {len(fsnet_list)} < {MIN_SAMPLES}")
 
         # DeepFingerprinting
         if len(df_list) >= MIN_SAMPLES:
@@ -751,26 +752,26 @@ def main():
         elif df_list:
             tqdm.write(f"    [跳过] {lbl} DF: 样本数 {len(df_list)} < {MIN_SAMPLES}")
 
-        # AppScanner
-        if len(appscanner_list) >= MIN_SAMPLES:
-            out_path = OUTPUT_DIRS["appscanner"] / f"{lbl}.npz"
-            np.savez_compressed(out_path, features=np.stack(appscanner_list, axis=0), label=lbl, label_id=lbl_id)
-            appscanner_count += len(appscanner_list)
-            saved_any = True
-        elif appscanner_list:
-            tqdm.write(f"    [跳过] {lbl} AppScanner: 样本数 {len(appscanner_list)} < {MIN_SAMPLES}")
+        # AppScanner (已禁用)
+        # if len(appscanner_list) >= MIN_SAMPLES:
+        #     out_path = OUTPUT_DIRS["appscanner"] / f"{lbl}.npz"
+        #     np.savez_compressed(out_path, features=np.stack(appscanner_list, axis=0), label=lbl, label_id=lbl_id)
+        #     appscanner_count += len(appscanner_list)
+        #     saved_any = True
+        # elif appscanner_list:
+        #     tqdm.write(f"    [跳过] {lbl} AppScanner: 样本数 {len(appscanner_list)} < {MIN_SAMPLES}")
 
-        # YaTC
-        if len(yatc_list) >= MIN_SAMPLES:
-            out_path = OUTPUT_DIRS["yatc"] / f"{lbl}.npz"
-            np.savez_compressed(out_path, images=np.stack(yatc_list, axis=0), label=lbl, label_id=lbl_id)
-            yatc_count += len(yatc_list)
-            saved_any = True
-        elif yatc_list:
-            tqdm.write(f"    [跳过] {lbl} YaTC: 样本数 {len(yatc_list)} < {MIN_SAMPLES}")
+        # YaTC (已禁用)
+        # if len(yatc_list) >= MIN_SAMPLES:
+        #     out_path = OUTPUT_DIRS["yatc"] / f"{lbl}.npz"
+        #     np.savez_compressed(out_path, images=np.stack(yatc_list, axis=0), label=lbl, label_id=lbl_id)
+        #     yatc_count += len(yatc_list)
+        #     saved_any = True
+        # elif yatc_list:
+        #     tqdm.write(f"    [跳过] {lbl} YaTC: 样本数 {len(yatc_list)} < {MIN_SAMPLES}")
 
         if saved_any:
-            tqdm.write(f"  [完成] {lbl}: FS-Net={len(fsnet_list)}, DF={len(df_list)}, AppScanner={len(appscanner_list)}, YaTC={len(yatc_list)}")
+            tqdm.write(f"  [完成] {lbl}: DF={len(df_list)}")
 
         # 更新进度文件
         completed_labels.add(lbl)
