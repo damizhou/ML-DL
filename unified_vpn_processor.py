@@ -33,6 +33,7 @@ import multiprocessing as mp
 import warnings
 import time
 import gc
+from datetime import datetime
 
 import numpy as np
 import psutil
@@ -563,6 +564,7 @@ def save_model_data(
 
 
 def main():
+    max_sys_mem_percent = 0
     parser = argparse.ArgumentParser(description="统一 VPN 数据处理脚本")
     parser.add_argument("--root", type=str, default="/mnt/netdisk/dataset/vpn/data",
                         help="VPN 数据集根目录")
@@ -570,7 +572,7 @@ def main():
                         help="输出目录")
     parser.add_argument("--procs", type=int, default=32,
                         help="并行进程数")
-    parser.add_argument("--memory_limit", type=float, default=0.8,
+    parser.add_argument("--memory_limit", type=float, default=0.7,
                         help="内存使用率阈值 (0.0-1.0，默认0.8即80%%)")
     parser.add_argument("--max_labels", type=int, default=0,
                         help="最大处理标签数（0=不限制）")
@@ -793,6 +795,7 @@ def main():
 
     def print_worker_status(pool):
         """打印所有 worker 进程的内存状态"""
+        nonlocal max_sys_mem_percent
         try:
             workers = pool._pool
             lines = []
@@ -817,8 +820,10 @@ def main():
             if lines:
                 main_mem_gb = psutil.Process().memory_info().rss / (1024**3)
                 sys_mem = psutil.virtual_memory()
+                if sys_mem.percent > max_sys_mem_percent:
+                    max_sys_mem_percent = sys_mem.percent
                 tqdm.write("\n" + "=" * 70)
-                tqdm.write(f"[进程状态] 主进程: {main_mem_gb:.2f} GB | Worker总计: {total_mem_gb:.2f} GB | 系统: {sys_mem.percent:.1f}%")
+                tqdm.write(f"[{datetime.now().strftime('%H:%M:%S')}] 主进程: {main_mem_gb:.2f} GB | Worker总计: {total_mem_gb:.2f} GB | 系统: {sys_mem.percent:.1f}% (峰值: {max_sys_mem_percent:.1f}%)")
                 tqdm.write("\n".join(lines))
                 tqdm.write("=" * 70)
         except Exception as e:
