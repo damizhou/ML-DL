@@ -73,6 +73,7 @@ class TrainArgs:
 
     # Data path (supports unified_dir and single_npz formats)
     data_path: str = '/root/autodl-tmp/data/iscxvpn'         # single_npz: data.npz + labels.json
+    # data_path: str = '/root/autodl-tmp/data/vpntest'         # single_npz: data.npz + labels.json
     # data_path: str = '/root/autodl-tmp/data/iscxtor'         # single_npz: data.npz + labels.json
     # data_path: str = '/root/autodl-tmp/data/ustc'            # single_npz: data.npz + labels.json
     # data_path: str = '/root/autodl-tmp/data/cic_iot_2022'    # single_npz: data.npz + labels.json
@@ -86,7 +87,7 @@ class TrainArgs:
 
     # Training parameters (Paper Table 1)
     epochs: int = 100                            # Paper: 30
-    batch_size: int = 2048                       # Paper: 128
+    batch_size: int = 128                       # Paper: 128
     lr: float = 0.002                           # Paper: 0.002
     optimizer: str = 'adamax'                   # Paper: Adamax
 

@@ -42,20 +42,41 @@ except ImportError:
 # Configuration - Modify these settings
 # =============================================================================
 # Input paths - modify these to match your dataset location
-LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/USTC-TFC2016/label_map.csv"
-VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/USTC-TFC2016/service_vocab.csv"
+LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-VPN-NonVPN-2016/label_map.csv"
+VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-VPN-NonVPN-2016/service_vocab.csv"
+OUTPUT_DIR = './data/iscxvpn'
+DATASET_NAME = 'ISCXVPN'
 
-# Output path
-OUTPUT_DIR = './data/ustc'
+# LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-Tor-NonTor-2017/label_map.csv"
+# VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-Tor-NonTor-2017/service_vocab.csv"
+# OUTPUT_DIR = './data/iscxtor'
+# DATASET_NAME = 'ISCXTor'
 
-# Dataset name (for metadata)
-DATASET_NAME = 'USTC-TFC'
+# LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/USTC-TFC2016/label_map.csv"
+# VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/USTC-TFC2016/service_vocab.csv"
+# OUTPUT_DIR = './data/ustc'
+# DATASET_NAME = 'USTC-TFC'
+
+# LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/Cross-Platform/label_map.csv"
+# VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/Cross-Platform/app_vocab.csv"
+# OUTPUT_DIR = './data/cross_platform'
+# DATASET_NAME = 'CrossPlatform'
+
+# LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/CIC-IOT-Dataset2022/label_map.csv"
+# VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/CIC-IOT-Dataset2022/label_vocab.csv"
+# OUTPUT_DIR = './data/cic_iot_2022'
+# DATASET_NAME = 'CIC_IOT_2022'
+
 
 # Flow extraction parameters (Paper Section 4: Data Collection)
 MIN_PACKETS = 50          # Minimum packets per flow (Paper: "too short – less than 50 packets")
 MAX_PACKETS = 5000        # Maximum packets per flow (Paper Section 5.1: "5,000 cells provide the best results")
-FLOW_TIMEOUT = 60.0       # Flow timeout in seconds (for splitting long connections)
 PAYLOAD_ONLY = True       # Only count packets with payload (skip SYN/ACK/FIN without data)
+# Note: 论文中没有 FLOW_TIMEOUT 机制，每个五元组对应一个流，不按时间拆分
+
+# Noise traffic filtering (与 build_dirseq_dataset.py 保持一致)
+EXCLUDE_L4_PORTS = {('udp', 5353)}  # mDNS 端口，排除整条流
+EXCLUDE_MCAST_IPS = {'224.0.0.251', 'ff02::fb', 'ff05::fb'}  # 组播地址
 
 # Random seed
 RANDOM_SEED = 42
@@ -199,18 +220,27 @@ def extract_flows_from_pcap(pcap_path: str, return_stats: bool = False):
 
                 # Get transport layer info and payload
                 payload = b''
+                proto_str = None
                 if isinstance(ip.data, dpkt.tcp.TCP):
                     tcp = ip.data
                     sport, dport, proto = tcp.sport, tcp.dport, 6
+                    proto_str = 'tcp'
                     payload = bytes(tcp.data) if tcp.data else b''
                 elif isinstance(ip.data, dpkt.udp.UDP):
                     udp = ip.data
                     sport, dport, proto = udp.sport, udp.dport, 17
+                    proto_str = 'udp'
                     payload = bytes(udp.data) if udp.data else b''
                 else:
                     continue
 
                 stats['tcp_udp_packets'] += 1
+
+                # Filter out noise traffic (mDNS, multicast)
+                if (proto_str, sport) in EXCLUDE_L4_PORTS or (proto_str, dport) in EXCLUDE_L4_PORTS:
+                    continue
+                if src_ip in EXCLUDE_MCAST_IPS or dst_ip in EXCLUDE_MCAST_IPS:
+                    continue
 
                 # Skip packets without payload (consistent with unified_novpn_processor)
                 if PAYLOAD_ONLY and len(payload) == 0:
@@ -235,34 +265,27 @@ def extract_flows_from_pcap(pcap_path: str, return_stats: bool = False):
     stats['flows_before_filter'] = len(flows)
 
     # Convert to FlowData objects with direction sequences
+    # 论文中每个五元组对应一个流，不按时间拆分
     result = []
     for flow_key, flow_packets in flows.items():
         if len(flow_packets) < MIN_PACKETS:
             continue
 
+        # Sort by timestamp
         flow_packets.sort(key=lambda x: x[0])
 
         # Determine client IP (first packet's source)
         client_ip = flow_packets[0][1]
 
+        # Extract direction sequence: +1 = outgoing (from client), -1 = incoming
         directions = []
-        last_time = flow_packets[0][0]
-
         for pkt_time, src_ip in flow_packets:
-            # Split by timeout
-            if pkt_time - last_time > FLOW_TIMEOUT and len(directions) >= MIN_PACKETS:
-                result.append(FlowData(directions=directions[:MAX_PACKETS]))
-                directions = []
-                client_ip = src_ip
-
-            # Direction: +1 = outgoing (from client), -1 = incoming
             if src_ip == client_ip:
                 directions.append(1)
             else:
                 directions.append(-1)
 
-            last_time = pkt_time
-
+        # Truncate to MAX_PACKETS (Paper: 5000 cells)
         if len(directions) >= MIN_PACKETS:
             result.append(FlowData(directions=directions[:MAX_PACKETS]))
 
@@ -470,7 +493,6 @@ def process_dataset():
         'payload_only': PAYLOAD_ONLY,
         'min_packets': MIN_PACKETS,
         'max_packets': MAX_PACKETS,
-        'flow_timeout': FLOW_TIMEOUT,
         'num_classes': len(new_vocab),
         'total_samples': len(labels),
         'class_names': list(new_vocab.values()),

@@ -572,7 +572,7 @@ def main():
                         help="输出目录")
     parser.add_argument("--procs", type=int, default=16,
                         help="并行进程数")
-    parser.add_argument("--memory_limit", type=float, default=0.6,
+    parser.add_argument("--memory_limit", type=float, default=0.8,
                         help="内存使用率阈值 (0.0-1.0，默认0.8即80%%)")
     parser.add_argument("--max_labels", type=int, default=0,
                         help="最大处理标签数（0=不限制）")
