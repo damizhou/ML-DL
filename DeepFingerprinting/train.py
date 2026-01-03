@@ -87,7 +87,8 @@ class TrainArgs:
 
     # Training parameters (Paper Table 1)
     epochs: int = 100                            # Paper: 30
-    batch_size: int = 128                       # Paper: 128
+    batch_size: int = 2048                       # Actual batch size for GPU
+    accum_steps: int = 16                        # Gradient accumulation steps (effective batch = 2048/16 = 128)
     lr: float = 0.002                           # Paper: 0.002
     optimizer: str = 'adamax'                   # Paper: Adamax
 
@@ -295,31 +296,44 @@ def create_dataloaders(sequences: List, labels: np.ndarray, args: TrainArgs) -> 
 # =============================================================================
 
 def train_one_epoch(model: nn.Module, loader: DataLoader, optimizer: torch.optim.Optimizer,
-                    criterion: nn.Module, device: torch.device, scaler) -> Tuple[float, float]:
-    """Train for one epoch."""
+                    criterion: nn.Module, device: torch.device, scaler, accum_steps: int = 1) -> Tuple[float, float]:
+    """Train for one epoch with gradient accumulation.
+
+    Args:
+        accum_steps: Number of gradient accumulation steps.
+                     Effective batch size = batch_size / accum_steps
+    """
     model.train()
     total_loss = 0.0
     correct = 0
     total = 0
 
-    for x, y in loader:
-        x, y = x.to(device), y.to(device)
+    optimizer.zero_grad()
 
-        optimizer.zero_grad()
+    for step, (x, y) in enumerate(loader):
+        x, y = x.to(device), y.to(device)
 
         with torch.amp.autocast('cuda', enabled=(scaler is not None)):
             logits = model(x)
             loss = criterion(logits, y)
+            # Scale loss by accumulation steps
+            loss = loss / accum_steps
 
         if scaler is not None:
             scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
         else:
             loss.backward()
-            optimizer.step()
 
-        total_loss += loss.item() * x.size(0)
+        # Update weights every accum_steps or at the last step
+        if (step + 1) % accum_steps == 0 or (step + 1) == len(loader):
+            if scaler is not None:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
+            optimizer.zero_grad()
+
+        total_loss += loss.item() * accum_steps * x.size(0)  # Undo the scaling for logging
         _, predicted = logits.max(1)
         correct += predicted.eq(y).sum().item()
         total += x.size(0)
@@ -473,12 +487,13 @@ def mode_train(args: TrainArgs):
     scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
 
     # Training configuration
+    effective_batch = args.batch_size // args.accum_steps
     log("\nTraining Configuration:")
-    log(f"  Epochs:        {args.epochs}")
-    log(f"  Batch size:    {args.batch_size}")
-    log(f"  Learning rate: {args.lr}")
-    log(f"  Optimizer:     {args.optimizer}")
-    log(f"  Input length:  {args.input_len}")
+    log(f"  Epochs:          {args.epochs}")
+    log(f"  Batch size:      {args.batch_size} (effective: {effective_batch} with {args.accum_steps} accum steps)")
+    log(f"  Learning rate:   {args.lr}")
+    log(f"  Optimizer:       {args.optimizer}")
+    log(f"  Input length:    {args.input_len}")
     log("=" * 70)
 
     # Training loop
@@ -488,7 +503,7 @@ def mode_train(args: TrainArgs):
     for epoch in range(1, args.epochs + 1):
         epoch_start = datetime.now()
 
-        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device, scaler)
+        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device, scaler, args.accum_steps)
         val_metrics = evaluate(model, val_loader, device, num_classes)
 
         epoch_time = (datetime.now() - epoch_start).total_seconds()
