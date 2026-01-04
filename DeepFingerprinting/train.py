@@ -72,9 +72,8 @@ class TrainArgs:
     mode: str = 'train'
 
     # Data path (supports unified_dir and single_npz formats)
-    data_path: str = '/root/autodl-tmp/data/iscxvpn'         # single_npz: data.npz + labels.json
-    # data_path: str = '/root/autodl-tmp/data/vpntest'         # single_npz: data.npz + labels.json
-    # data_path: str = '/root/autodl-tmp/data/iscxtor'         # single_npz: data.npz + labels.json
+    # data_path: str = '/root/autodl-tmp/data/iscxvpn'         # single_npz: data.npz + labels.json
+    data_path: str = '/root/autodl-tmp/data/iscxtor'         # single_npz: data.npz + labels.json
     # data_path: str = '/root/autodl-tmp/data/ustc'            # single_npz: data.npz + labels.json
     # data_path: str = '/root/autodl-tmp/data/cic_iot_2022'    # single_npz: data.npz + labels.json
     # data_path: str = '/root/autodl-tmp/data/cross_platform'  # single_npz: data.npz + labels.json
@@ -87,8 +86,8 @@ class TrainArgs:
 
     # Training parameters (Paper Table 1)
     epochs: int = 100                            # Paper: 30
-    batch_size: int = 2048                       # Actual batch size for GPU
-    accum_steps: int = 16                        # Gradient accumulation steps (effective batch = 2048/16 = 128)
+    batch_size: int = 128                       # Actual batch size for GPU
+    accum_steps: int = 1                        # Gradient accumulation steps (effective batch = 2048/16 = 128)
     lr: float = 0.002                           # Paper: 0.002
     optimizer: str = 'adamax'                   # Paper: Adamax
 
@@ -662,6 +661,10 @@ def main():
 
     args = get_args()
     set_seed(args.seed)
+
+    # Create dataset-specific output directory to avoid conflicts
+    dataset_name = Path(args.data_path).name
+    args.output_dir = os.path.join(args.output_dir, dataset_name)
 
     os.makedirs(args.output_dir, exist_ok=True)
     log_path = setup_logging(args.output_dir)

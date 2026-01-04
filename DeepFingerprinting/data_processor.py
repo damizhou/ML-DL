@@ -52,20 +52,20 @@ VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-Tor-NonTor-2017/service_voc
 OUTPUT_DIR = './data/iscxtor'
 DATASET_NAME = 'ISCXTor'
 
-# LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/USTC-TFC2016/label_map.csv"
-# VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/USTC-TFC2016/service_vocab.csv"
-# OUTPUT_DIR = './data/ustc'
-# DATASET_NAME = 'USTC-TFC'
+LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/USTC-TFC2016/label_map.csv"
+VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/USTC-TFC2016/service_vocab.csv"
+OUTPUT_DIR = './data/ustc'
+DATASET_NAME = 'USTC-TFC'
 
-# LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/Cross-Platform/label_map.csv"
-# VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/Cross-Platform/app_vocab.csv"
-# OUTPUT_DIR = './data/cross_platform'
-# DATASET_NAME = 'CrossPlatform'
+LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/Cross-Platform/label_map.csv"
+VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/Cross-Platform/app_vocab.csv"
+OUTPUT_DIR = './data/cross_platform'
+DATASET_NAME = 'CrossPlatform'
 
-# LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/CIC-IOT-Dataset2022/label_map.csv"
-# VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/CIC-IOT-Dataset2022/label_vocab.csv"
-# OUTPUT_DIR = './data/cic_iot_2022'
-# DATASET_NAME = 'CIC_IOT_2022'
+LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/CIC-IOT-Dataset2022/label_map.csv"
+VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/CIC-IOT-Dataset2022/label_vocab.csv"
+OUTPUT_DIR = './data/cic_iot_2022'
+DATASET_NAME = 'CIC_IOT_2022'
 
 
 # Flow extraction parameters (Paper Section 4: Data Collection)

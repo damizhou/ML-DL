@@ -227,15 +227,15 @@ def main():
     parser.add_argument(
         "--input", "-i",
         type=str,
-        # default="./data/vpn_unified_output",
-        default="./data/novpn_unified_output",
+        default="./data/vpn_unified_output",
+        # default="./data/novpn_unified_output",
         help="输入目录 (unified_vpn_processor 输出)"
     )
     parser.add_argument(
         "--output", "-o",
         type=str,
-        # default="./data/vpn",
-        default="./data/novpn",
+        default="./data/vpn",
+        # default="./data/novpn",
         help="输出目录 (包含 data.npz 和 labels.json)"
     )
     parser.add_argument(
