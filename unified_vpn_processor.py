@@ -117,20 +117,8 @@ class Config:
 
 
 # ============================================================================
-# 数据包解析（只读取一次）
+# 数据包解析辅助函数
 # ============================================================================
-
-@dataclass
-class PacketInfo:
-    """解析后的数据包信息"""
-    timestamp: float
-    length: int           # 数据包总长度
-    direction: int        # +1 出站, -1 入站
-    ip_header: bytes      # IP 头部
-    l4_header: bytes      # L4 头部
-    payload: bytes        # 载荷
-    flow_key: tuple       # 五元组 key
-
 
 def parse_l3(buf: bytes):
     """解析 L3 层"""
@@ -185,21 +173,207 @@ def iter_packets(pcap_path: Path) -> Iterable[Tuple[float, bytes]]:
             pass
 
 
-def parse_pcap_once(pcap_path: Path, config: Config) -> Dict[tuple, List[PacketInfo]]:
+# ============================================================================
+# 流式 PCAP 解析（低内存版本）- 为每个模型提供专用函数
+# ============================================================================
+
+def _parse_packet_basic(l3, config) -> Optional[Tuple[str, int, int, int, int, bytes]]:
     """
-    一次性解析 PCAP，返回按流聚合的数据包信息
+    解析数据包基本信息（内部辅助函数）
 
     Returns:
-        Dict[flow_key, List[PacketInfo]]
+        (proto_str, sport, dport, direction, length, payload) 或 None
     """
-    flows: Dict[tuple, List[PacketInfo]] = defaultdict(list)
+    proto_str = None
+    sport = dport = None
+    payload = b''
+
+    if isinstance(l3, dpkt.ip.IP):
+        if l3.p == dpkt.ip.IP_PROTO_TCP and isinstance(l3.data, dpkt.tcp.TCP):
+            proto_str = "TCP"
+            sport, dport = int(l3.data.sport), int(l3.data.dport)
+            payload = bytes(l3.data.data) if l3.data.data else b''
+        elif l3.p == dpkt.ip.IP_PROTO_UDP and isinstance(l3.data, dpkt.udp.UDP):
+            if int(l3.data.sport) in config.exclude_udp_ports or int(l3.data.dport) in config.exclude_udp_ports:
+                return None
+            proto_str = "UDP"
+            sport, dport = int(l3.data.sport), int(l3.data.dport)
+            payload = bytes(l3.data.data) if l3.data.data else b''
+
+    elif isinstance(l3, dpkt.ip6.IP6):
+        if l3.nxt == dpkt.ip.IP_PROTO_TCP and isinstance(l3.data, dpkt.tcp.TCP):
+            proto_str = "TCP"
+            sport, dport = int(l3.data.sport), int(l3.data.dport)
+            payload = bytes(l3.data.data) if l3.data.data else b''
+        elif l3.nxt == dpkt.ip.IP_PROTO_UDP and isinstance(l3.data, dpkt.udp.UDP):
+            if int(l3.data.sport) in config.exclude_udp_ports or int(l3.data.dport) in config.exclude_udp_ports:
+                return None
+            proto_str = "UDP"
+            sport, dport = int(l3.data.sport), int(l3.data.dport)
+            payload = bytes(l3.data.data) if l3.data.data else b''
+
+    if proto_str is None or not payload:
+        return None
+
+    # 计算方向
+    src_ip = ipaddress.ip_address(l3.src)
+    dst_ip = ipaddress.ip_address(l3.dst)
+    a = (int(src_ip), sport)
+    b = (int(dst_ip), dport)
+
+    if a <= b:
+        key = (proto_str, (src_ip.compressed, sport), (dst_ip.compressed, dport))
+        direction = 1
+    else:
+        key = (proto_str, (dst_ip.compressed, dport), (src_ip.compressed, sport))
+        direction = -1
+
+    return (key, direction, sport, dport, payload)
+
+
+def parse_pcap_streaming_df(pcap_path: Path, config: Config) -> Tuple[Dict[tuple, List[int]], int]:
+    """
+    流式解析 PCAP - DeepFingerprinting 专用
+
+    仅提取方向序列 (±1)，内存占用极低。
+    每个流达到 df_max_seq_len 后停止收集。
+
+    Returns:
+        (Dict[flow_key, List[direction]], packet_count)
+    """
+    flows: Dict[tuple, List[int]] = defaultdict(list)
+    completed_flows: set = set()
+    packet_count = 0
 
     for ts, buf in iter_packets(pcap_path):
+        packet_count += 1
         l3 = parse_l3(buf)
         if l3 is None:
             continue
 
-        # 提取协议和端口
+        result = _parse_packet_basic(l3, config)
+        if result is None:
+            continue
+
+        key, direction, _, _, _ = result
+
+        if key in completed_flows:
+            continue
+
+        flows[key].append(direction)
+
+        if len(flows[key]) >= config.df_max_seq_len:
+            completed_flows.add(key)
+
+    return dict(flows), packet_count
+
+
+def parse_pcap_streaming_fsnet(pcap_path: Path, config: Config) -> Tuple[Dict[tuple, List[int]], int]:
+    """
+    流式解析 PCAP - FS-Net 专用
+
+    提取带符号的数据包长度序列 (direction * length)。
+    每个流达到 fsnet_max_seq_len 后停止收集。
+
+    Returns:
+        (Dict[flow_key, List[signed_length]], packet_count)
+    """
+    flows: Dict[tuple, List[int]] = defaultdict(list)
+    completed_flows: set = set()
+    packet_count = 0
+
+    for ts, buf in iter_packets(pcap_path):
+        packet_count += 1
+        l3 = parse_l3(buf)
+        if l3 is None:
+            continue
+
+        result = _parse_packet_basic(l3, config)
+        if result is None:
+            continue
+
+        key, direction, _, _, _ = result
+
+        if key in completed_flows:
+            continue
+
+        # 带符号的长度
+        pkt_len = min(len(buf), config.fsnet_max_pkt_len)
+        signed_len = direction * pkt_len
+        flows[key].append(signed_len)
+
+        if len(flows[key]) >= config.fsnet_max_seq_len:
+            completed_flows.add(key)
+
+    return dict(flows), packet_count
+
+
+def parse_pcap_streaming_appscanner(pcap_path: Path, config: Config) -> Tuple[Dict[tuple, List[Tuple[int, int]]], int]:
+    """
+    流式解析 PCAP - AppScanner 专用
+
+    提取 (direction, length) 元组序列。
+    每个流达到 appscanner_max_pkts 后停止收集。
+
+    Returns:
+        (Dict[flow_key, List[(direction, length)]], packet_count)
+    """
+    flows: Dict[tuple, List[Tuple[int, int]]] = defaultdict(list)
+    completed_flows: set = set()
+    packet_count = 0
+
+    for ts, buf in iter_packets(pcap_path):
+        packet_count += 1
+        l3 = parse_l3(buf)
+        if l3 is None:
+            continue
+
+        result = _parse_packet_basic(l3, config)
+        if result is None:
+            continue
+
+        key, direction, _, _, _ = result
+
+        if key in completed_flows:
+            continue
+
+        flows[key].append((direction, len(buf)))
+
+        if len(flows[key]) >= config.appscanner_max_pkts:
+            completed_flows.add(key)
+
+    return dict(flows), packet_count
+
+
+@dataclass
+class YaTCPacketData:
+    """YaTC 所需的数据包数据（轻量级）"""
+    ip_header: bytes
+    l4_header: bytes
+    payload: bytes
+
+
+def parse_pcap_streaming_yatc(pcap_path: Path, config: Config) -> Tuple[Dict[tuple, List[YaTCPacketData]], int]:
+    """
+    流式解析 PCAP - YaTC 专用
+
+    提取 IP头 + L4头 + Payload（截断到配置长度）。
+    每个流达到 yatc_num_packets 后停止收集。
+
+    Returns:
+        (Dict[flow_key, List[YaTCPacketData]], packet_count)
+    """
+    flows: Dict[tuple, List[YaTCPacketData]] = defaultdict(list)
+    completed_flows: set = set()
+    packet_count = 0
+
+    for ts, buf in iter_packets(pcap_path):
+        packet_count += 1
+        l3 = parse_l3(buf)
+        if l3 is None:
+            continue
+
+        # YaTC 需要更多信息，单独处理
         proto_str = None
         sport = dport = None
         ip_header = b''
@@ -207,7 +381,7 @@ def parse_pcap_once(pcap_path: Path, config: Config) -> Dict[tuple, List[PacketI
         payload = b''
 
         if isinstance(l3, dpkt.ip.IP):
-            ip_header = bytes(l3.pack_hdr())
+            ip_header = bytes(l3.pack_hdr())[:config.yatc_header_len]
             if l3.p == dpkt.ip.IP_PROTO_TCP and isinstance(l3.data, dpkt.tcp.TCP):
                 proto_str = "TCP"
                 sport, dport = int(l3.data.sport), int(l3.data.dport)
@@ -222,7 +396,7 @@ def parse_pcap_once(pcap_path: Path, config: Config) -> Dict[tuple, List[PacketI
                 payload = bytes(l3.data.data) if l3.data.data else b''
 
         elif isinstance(l3, dpkt.ip6.IP6):
-            ip_header = bytes(l3.pack_hdr())
+            ip_header = bytes(l3.pack_hdr())[:config.yatc_header_len]
             if l3.nxt == dpkt.ip.IP_PROTO_TCP and isinstance(l3.data, dpkt.tcp.TCP):
                 proto_str = "TCP"
                 sport, dport = int(l3.data.sport), int(l3.data.dport)
@@ -236,14 +410,10 @@ def parse_pcap_once(pcap_path: Path, config: Config) -> Dict[tuple, List[PacketI
                 l4_header = bytes(l3.data.pack_hdr())
                 payload = bytes(l3.data.data) if l3.data.data else b''
 
-        if proto_str is None:
+        if proto_str is None or not payload:
             continue
 
-        # 过滤空包（payload 为空的包）
-        if len(payload) == 0:
-            continue
-
-        # 计算无向键和方向
+        # 计算 flow key
         src_ip = ipaddress.ip_address(l3.src)
         dst_ip = ipaddress.ip_address(l3.dst)
         a = (int(src_ip), sport)
@@ -251,58 +421,62 @@ def parse_pcap_once(pcap_path: Path, config: Config) -> Dict[tuple, List[PacketI
 
         if a <= b:
             key = (proto_str, (src_ip.compressed, sport), (dst_ip.compressed, dport))
-            direction = 1
         else:
             key = (proto_str, (dst_ip.compressed, dport), (src_ip.compressed, sport))
-            direction = -1
 
-        pkt_info = PacketInfo(
-            timestamp=ts,
-            length=len(buf),
-            direction=direction,
-            ip_header=ip_header,
-            l4_header=l4_header,
-            payload=payload,
-            flow_key=key
-        )
-
-        flows[key].append(pkt_info)
-
-    return dict(flows)
-
-
-# ============================================================================
-# 四种特征提取器
-# ============================================================================
-
-def extract_fsnet_features(flows: Dict[tuple, List[PacketInfo]], config: Config) -> List[np.ndarray]:
-    """提取 FS-Net 特征：数据包长度序列（带方向）"""
-    result = []
-
-    for packets in flows.values():
-        if len(packets) < config.fsnet_min_pkts:
+        if key in completed_flows:
             continue
 
-        lengths = []
-        for pkt in packets[:config.fsnet_max_seq_len]:
-            pkt_len = min(pkt.length, config.fsnet_max_pkt_len)
-            lengths.append(pkt.direction * pkt_len)
+        # 截断并存储
+        pkt_data = YaTCPacketData(
+            ip_header=ip_header[:config.yatc_header_len],
+            l4_header=l4_header[:config.yatc_header_len],
+            payload=payload[:config.yatc_payload_len]
+        )
+        flows[key].append(pkt_data)
 
-        result.append(np.array(lengths, dtype=np.int16))
+        if len(flows[key]) >= config.yatc_num_packets:
+            completed_flows.add(key)
+
+    return dict(flows), packet_count
+
+
+# ============================================================================
+# 四种特征提取器（适配流式解析结果）
+# ============================================================================
+
+def extract_fsnet_features_streaming(flows: Dict[tuple, List[int]], config: Config) -> List[np.ndarray]:
+    """
+    提取 FS-Net 特征：数据包长度序列（带方向）
+
+    Args:
+        flows: parse_pcap_streaming_fsnet 的返回值，Dict[flow_key, List[signed_length]]
+    """
+    result = []
+
+    for signed_lengths in flows.values():
+        if len(signed_lengths) < config.fsnet_min_pkts:
+            continue
+
+        result.append(np.array(signed_lengths[:config.fsnet_max_seq_len], dtype=np.int16))
 
     return result
 
 
-def extract_df_features(flows: Dict[tuple, List[PacketInfo]], config: Config) -> List[np.ndarray]:
-    """提取 DeepFingerprinting 特征：方向序列"""
+def extract_df_features_streaming(flows: Dict[tuple, List[int]], config: Config) -> List[np.ndarray]:
+    """
+    提取 DeepFingerprinting 特征：方向序列
+
+    Args:
+        flows: parse_pcap_streaming_df 的返回值，Dict[flow_key, List[direction]]
+    """
     result = []
 
-    for packets in flows.values():
-        if len(packets) < config.df_min_pkts:
+    for directions in flows.values():
+        if len(directions) < config.df_min_pkts:
             continue
 
-        directions = [np.int8(pkt.direction) for pkt in packets[:config.df_max_seq_len]]
-        result.append(np.array(directions, dtype=np.int8))
+        result.append(np.array(directions[:config.df_max_seq_len], dtype=np.int8))
 
     return result
 
@@ -340,8 +514,13 @@ def compute_statistics(lengths: np.ndarray, percentiles: List[int]) -> np.ndarra
     return np.array(features, dtype=np.float32)
 
 
-def extract_appscanner_features(flows: Dict[tuple, List[PacketInfo]], config: Config) -> List[np.ndarray]:
-    """提取 AppScanner 特征：54维统计特征"""
+def extract_appscanner_features_streaming(flows: Dict[tuple, List[Tuple[int, int]]], config: Config) -> List[np.ndarray]:
+    """
+    提取 AppScanner 特征：54维统计特征
+
+    Args:
+        flows: parse_pcap_streaming_appscanner 的返回值，Dict[flow_key, List[(direction, length)]]
+    """
     result = []
 
     for packets in flows.values():
@@ -350,16 +529,8 @@ def extract_appscanner_features(flows: Dict[tuple, List[PacketInfo]], config: Co
             continue
 
         # 分离入站和出站
-        incoming = [pkt.length for pkt in packets if pkt.direction == -1]
-        outgoing = [pkt.length for pkt in packets if pkt.direction == 1]
-
-        # 截断
-        if total_pkts > config.appscanner_max_pkts:
-            ratio = len(outgoing) / total_pkts if total_pkts > 0 else 0.5
-            max_out = int(config.appscanner_max_pkts * ratio)
-            max_in = config.appscanner_max_pkts - max_out
-            outgoing = outgoing[:max_out]
-            incoming = incoming[:max_in]
+        incoming = [length for direction, length in packets if direction == -1]
+        outgoing = [length for direction, length in packets if direction == 1]
 
         incoming_arr = np.array(incoming, dtype=np.float64)
         outgoing_arr = np.array(outgoing, dtype=np.float64)
@@ -375,8 +546,13 @@ def extract_appscanner_features(flows: Dict[tuple, List[PacketInfo]], config: Co
     return result
 
 
-def extract_yatc_features(flows: Dict[tuple, List[PacketInfo]], config: Config) -> List[np.ndarray]:
-    """提取 YaTC 特征：MFR 图像"""
+def extract_yatc_features_streaming(flows: Dict[tuple, List[YaTCPacketData]], config: Config) -> List[np.ndarray]:
+    """
+    提取 YaTC 特征：MFR 图像
+
+    Args:
+        flows: parse_pcap_streaming_yatc 的返回值，Dict[flow_key, List[YaTCPacketData]]
+    """
     result = []
     bytes_per_packet = config.yatc_header_len + config.yatc_payload_len
     total_bytes = config.yatc_num_packets * bytes_per_packet
@@ -432,7 +608,10 @@ def init_worker(worker_status):
 
 
 def process_single_pcap(args: Tuple[str, str, Config]) -> Tuple[str, str, FlowFeatures, float, int, int]:
-    """处理单个 PCAP 文件，一次读取提取四种特征
+    """处理单个 PCAP 文件，使用流式解析提取特征（低内存）
+
+    每个模型独立解析 PCAP 文件，避免一次性加载所有数据包到内存。
+    对于超大文件（如 1.57 亿包），内存占用从 100GB+ 降低到几十 MB。
 
     Returns:
         (pcap_path, label, features, memory_mb, flow_count, packet_count)
@@ -457,20 +636,38 @@ def process_single_pcap(args: Tuple[str, str, Config]) -> Tuple[str, str, FlowFe
         if pcap_path.stat().st_size < config.min_pcap_size:
             return (str(pcap_path), label, features, memory_mb, flow_count, packet_count)
 
-        # 一次性解析 PCAP
-        flows = parse_pcap_once(pcap_path, config)
+        # ================================================================
+        # 流式解析 - 每个模型独立解析，避免内存爆炸
+        # ================================================================
 
-        if not flows:
-            return (str(pcap_path), label, features, memory_mb, flow_count, packet_count)
+        # DeepFingerprinting（默认启用）
+        df_flows, packet_count = parse_pcap_streaming_df(pcap_path, config)
+        flow_count = len(df_flows)
+        if df_flows:
+            features.df = extract_df_features_streaming(df_flows, config)
+        del df_flows  # 立即释放
+        gc.collect()
 
-        flow_count = len(flows)
-        packet_count = sum(len(pkts) for pkts in flows.values())
+        # FS-Net（按需启用，取消下方注释即可）
+        # fsnet_flows, _ = parse_pcap_streaming_fsnet(pcap_path, config)
+        # if fsnet_flows:
+        #     features.fsnet = extract_fsnet_features_streaming(fsnet_flows, config)
+        # del fsnet_flows
+        # gc.collect()
 
-        # 提取四种特征
-        # features.fsnet = extract_fsnet_features(flows, config)
-        features.df = extract_df_features(flows, config)
-        # features.appscanner = extract_appscanner_features(flows, config)
-        # features.yatc = extract_yatc_features(flows, config)
+        # AppScanner（按需启用，取消下方注释即可）
+        # appscanner_flows, _ = parse_pcap_streaming_appscanner(pcap_path, config)
+        # if appscanner_flows:
+        #     features.appscanner = extract_appscanner_features_streaming(appscanner_flows, config)
+        # del appscanner_flows
+        # gc.collect()
+
+        # YaTC（按需启用，取消下方注释即可）
+        # yatc_flows, _ = parse_pcap_streaming_yatc(pcap_path, config)
+        # if yatc_flows:
+        #     features.yatc = extract_yatc_features_streaming(yatc_flows, config)
+        # del yatc_flows
+        # gc.collect()
 
         # 记录当前进程内存
         memory_mb = proc.memory_info().rss / (1024 * 1024)

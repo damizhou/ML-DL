@@ -47,10 +47,10 @@ VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-VPN-NonVPN-2016/service_voc
 OUTPUT_DIR = './data/iscxvpn'
 DATASET_NAME = 'ISCXVPN'
 
-# LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-Tor-NonTor-2017/label_map.csv"
-# VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-Tor-NonTor-2017/service_vocab.csv"
-# OUTPUT_DIR = './data/iscxtor'
-# DATASET_NAME = 'ISCXTor'
+LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-Tor-NonTor-2017/label_map.csv"
+VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-Tor-NonTor-2017/service_vocab.csv"
+OUTPUT_DIR = './data/iscxtor'
+DATASET_NAME = 'ISCXTor'
 
 # LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/USTC-TFC2016/label_map.csv"
 # VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/USTC-TFC2016/service_vocab.csv"
