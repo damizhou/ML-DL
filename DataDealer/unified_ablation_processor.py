@@ -85,7 +85,7 @@ class Config:
     """统一配置"""
     # 输入输出
     root: Path = Path("/netdisk/dataset/ablation_study")
-    output: Path = Path(".")
+    output: Path = Path("..")
 
     # 并行处理
     max_procs: int = 8
@@ -490,11 +490,11 @@ def collect_pcap_files(root: Path, config: Config) -> Tuple[Dict[str, List[Tuple
 def main():
     max_sys_mem_percent = 0
     parser = argparse.ArgumentParser(description="统一消融实验数据处理脚本")
-    parser.add_argument("--root", type=str, default="/netdisk/dataset/ablation_study",
+    parser.add_argument("--root", type=str, default="/mnt/netdisk/dataset/ablation_study",
                         help="消融实验数据集根目录")
     parser.add_argument("--output", type=str, default=".",
                         help="输出目录（项目根目录）")
-    parser.add_argument("--procs", type=int, default=8,
+    parser.add_argument("--procs", type=int, default=64,
                         help="并行进程数")
     parser.add_argument("--memory_limit", type=float, default=0.8,
                         help="内存使用率阈值")
@@ -698,21 +698,6 @@ def main():
             if current_time - last_monitor_time >= MONITOR_INTERVAL:
                 print_worker_status(pool)
                 last_monitor_time = current_time
-
-            mem = psutil.virtual_memory()
-            if mem.percent / 100.0 >= config.memory_limit:
-                memory_wait_count += 1
-                tqdm.write(f"  [内存] 使用率 {mem.percent:.1f}% >= {config.memory_limit * 100:.0f}%，等待任务完成...")
-
-                gc.collect()
-
-                while pending_results:
-                    collect_completed()
-                    if pending_results:
-                        time.sleep(0.5)
-
-                gc.collect()
-                tqdm.write(f"  [内存] 当前 {psutil.virtual_memory().percent:.1f}%，继续处理")
 
             collect_completed()
 
