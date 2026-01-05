@@ -56,7 +56,6 @@ IMAGE_SIZE = 40           # 40×40 image
 
 # Flow extraction parameters
 MIN_PACKETS = NUM_PACKETS  # Minimum packets per flow (need at least 5 for MFR)
-FLOW_TIMEOUT = 60.0        # Flow timeout in seconds
 
 # Multi-process
 NUM_WORKERS = 8
@@ -349,17 +348,11 @@ def extract_flows_from_pcap(pcap_path: str, return_stats: bool = False):
         # Sort by timestamp
         packets.sort(key=lambda x: x.timestamp)
 
-        # Split by timeout
+        # Collect packets for this flow
         current_packets = []
-        last_time = packets[0].timestamp
 
         for pkt in packets:
-            if pkt.timestamp - last_time > FLOW_TIMEOUT and len(current_packets) >= MIN_PACKETS:
-                result.append(FlowData(packets=current_packets))
-                current_packets = []
-
             current_packets.append(pkt)
-            last_time = pkt.timestamp
 
         if len(current_packets) >= MIN_PACKETS:
             result.append(FlowData(packets=current_packets))

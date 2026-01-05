@@ -72,7 +72,6 @@ DATASET_NAME = 'CIC_IOT_2022'
 MIN_PACKETS = 50          # Minimum packets per flow (Paper: "too short – less than 50 packets")
 MAX_PACKETS = 5000        # Maximum packets per flow (Paper Section 5.1: "5,000 cells provide the best results")
 PAYLOAD_ONLY = True       # Only count packets with payload (skip SYN/ACK/FIN without data)
-# Note: 论文中没有 FLOW_TIMEOUT 机制，每个五元组对应一个流，不按时间拆分
 
 # Noise traffic filtering (与 build_dirseq_dataset.py 保持一致)
 EXCLUDE_L4_PORTS = {('udp', 5353)}  # mDNS 端口，排除整条流

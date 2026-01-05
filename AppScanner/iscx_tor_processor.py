@@ -49,7 +49,6 @@ OUTPUT_DIR = "/home/pcz/DL/ML_DL/AppScanner/data/iscxtor"
 # Flow extraction parameters
 MIN_PACKETS = 7           # Minimum packets per flow (AppScanner default)
 MAX_PACKETS = 260         # Maximum packets per flow (AppScanner default)
-FLOW_TIMEOUT = 60.0       # Flow timeout in seconds
 
 # Random seed for reproducibility
 RANDOM_SEED = 42
@@ -293,24 +292,14 @@ def extract_flows_from_pcap(pcap_path: str, return_stats: bool = False):
 
         lengths = []
         directions = []
-        last_time = flow_packets[0][0]
 
         for pkt_time, pkt_len, src_ip in flow_packets:
-            # Split by timeout
-            if pkt_time - last_time > FLOW_TIMEOUT and len(lengths) >= MIN_PACKETS:
-                result.append(FlowData(lengths=lengths, directions=directions))
-                lengths = []
-                directions = []
-                client_ip = src_ip
-
             lengths.append(pkt_len)
             # Outgoing: from client, Incoming: to client
             if src_ip == client_ip:
                 directions.append(-1)  # Outgoing
             else:
                 directions.append(1)   # Incoming
-
-            last_time = pkt_time
 
         if len(lengths) >= MIN_PACKETS:
             result.append(FlowData(lengths=lengths, directions=directions))

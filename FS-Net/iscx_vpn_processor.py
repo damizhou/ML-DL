@@ -52,7 +52,6 @@ OUTPUT_DIR = "/home/pcz/DL/ML_DL/FS-Net/data/iscxvpn"
 MIN_PACKETS = 10          # Minimum packets per flow
 MAX_PACKETS = 100         # Maximum packets per flow (FS-Net sequence length)
 MAX_PACKET_LEN = 1500     # Maximum packet length (cap to MTU)
-FLOW_TIMEOUT = 60.0       # Flow timeout in seconds
 
 # Random seed
 RANDOM_SEED = 42
@@ -212,15 +211,8 @@ def extract_flows_from_pcap(pcap_path: str, return_stats: bool = False):
         client_ip = flow_packets[0][2]
 
         lengths = []
-        last_time = flow_packets[0][0]
 
         for pkt_time, pkt_len, src_ip in flow_packets:
-            # Split by timeout
-            if pkt_time - last_time > FLOW_TIMEOUT and len(lengths) >= MIN_PACKETS:
-                result.append(FlowData(lengths=lengths[:MAX_PACKETS]))
-                lengths = []
-                client_ip = src_ip
-
             # Cap packet length to MTU
             pkt_len = min(pkt_len, MAX_PACKET_LEN)
 
@@ -229,8 +221,6 @@ def extract_flows_from_pcap(pcap_path: str, return_stats: bool = False):
                 lengths.append(pkt_len)
             else:
                 lengths.append(-pkt_len)
-
-            last_time = pkt_time
 
         if len(lengths) >= MIN_PACKETS:
             result.append(FlowData(lengths=lengths[:MAX_PACKETS]))
