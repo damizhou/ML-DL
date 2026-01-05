@@ -75,8 +75,8 @@ RANDOM_SEED = 42
 # Multi-process
 NUM_WORKERS = 8
 
-# Homepage identifier patterns (adjust according to actual naming)
-HOMEPAGE_PATTERNS = ['homepage', 'index', 'main', 'home', '0.pcap', 'page_0']
+# Homepage identifier: files starting with "1_" in single dataset
+HOMEPAGE_PREFIX = '1_'
 
 
 # =============================================================================
@@ -291,9 +291,12 @@ def extract_flows_from_pcap(pcap_path: str) -> List[FlowData]:
 
 
 def is_homepage(filename: str) -> bool:
-    """Determine if a PCAP file is a homepage based on filename."""
-    filename_lower = filename.lower()
-    return any(pattern in filename_lower for pattern in HOMEPAGE_PATTERNS)
+    """Determine if a PCAP file is a homepage based on filename.
+
+    Homepage files start with '1_' in the single dataset.
+    Example: 1_20251219_19_05_56_website.pcap
+    """
+    return filename.startswith(HOMEPAGE_PREFIX)
 
 
 def process_single_pcap(args: Tuple[str, int, str]) -> Tuple[int, List[np.ndarray], str, str]:
@@ -327,16 +330,25 @@ def process_single_pcap(args: Tuple[str, int, str]) -> Tuple[int, List[np.ndarra
 # Dataset Creation
 # =============================================================================
 
-def collect_pcap_files(dataset_dir: str, dataset_type: str) -> List[Tuple[str, int, str]]:
+def collect_pcap_files(dataset_dir: str, dataset_type: str) -> Tuple[List[Tuple[str, int, str]], Dict]:
     """
     Collect PCAP files from dataset directory.
+
+    Directory structure:
+    dataset_dir/
+    ├── website1/
+    │   └── pcap/
+    │       ├── batch_*.pcap (for batch dataset)
+    │       ├── 1_*.pcap (homepage, for single dataset)
+    │       ├── 2_*.pcap (subpage, for single dataset)
+    │       └── ...
 
     Args:
         dataset_dir: Root directory (batch or single)
         dataset_type: 'batch' or 'single'
 
     Returns:
-        List of (pcap_path, label, page_type) tuples
+        List of (pcap_path, label, page_type) tuples, label_map
     """
     tasks = []
     label_map = {}  # website_name -> label_id
@@ -344,11 +356,16 @@ def collect_pcap_files(dataset_dir: str, dataset_type: str) -> List[Tuple[str, i
 
     if not os.path.exists(dataset_dir):
         print(f"Warning: {dataset_dir} does not exist")
-        return tasks
+        return tasks, label_map
 
     for website in sorted(os.listdir(dataset_dir)):
         website_dir = os.path.join(dataset_dir, website)
         if not os.path.isdir(website_dir):
+            continue
+
+        # Look for pcap subdirectory
+        pcap_dir = os.path.join(website_dir, 'pcap')
+        if not os.path.exists(pcap_dir):
             continue
 
         # Assign label
@@ -358,12 +375,12 @@ def collect_pcap_files(dataset_dir: str, dataset_type: str) -> List[Tuple[str, i
 
         label = label_map[website]
 
-        # Collect PCAP files
-        for filename in os.listdir(website_dir):
+        # Collect PCAP files from pcap subdirectory
+        for filename in os.listdir(pcap_dir):
             if not filename.endswith('.pcap'):
                 continue
 
-            pcap_path = os.path.join(website_dir, filename)
+            pcap_path = os.path.join(pcap_dir, filename)
 
             # Determine page type
             if dataset_type == 'batch':
