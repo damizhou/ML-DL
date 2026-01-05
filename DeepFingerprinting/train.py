@@ -73,11 +73,11 @@ class TrainArgs:
 
     # Data path (supports unified_dir and single_npz formats)
     # data_path: str = '/root/autodl-tmp/data/iscxvpn'         # single_npz: data.npz + labels.json
-    data_path: str = '/root/autodl-tmp/data/iscxtor'         # single_npz: data.npz + labels.json
+    # data_path: str = '/root/autodl-tmp/data/iscxtor'         # single_npz: data.npz + labels.json
     # data_path: str = '/root/autodl-tmp/data/ustc'            # single_npz: data.npz + labels.json
     # data_path: str = '/root/autodl-tmp/data/cic_iot_2022'    # single_npz: data.npz + labels.json
     # data_path: str = '/root/autodl-tmp/data/cross_platform'  # single_npz: data.npz + labels.json
-    # data_path: str = '/root/autodl-tmp/data/vpn'             # unified_dir: 多个 .npz 文件
+    data_path: str = '/root/autodl-tmp/data/vpn'             # unified_dir: 多个 .npz 文件
     # data_path: str = '/root/autodl-tmp/data/novpn'           # unified_dir: 多个 .npz 文件
 
     # Model configuration (Paper Section 5.1, Table 1)
@@ -455,11 +455,11 @@ def mode_train(args: TrainArgs):
     log(f"Kept classes: {num_classes}")
 
     # Print class distribution
-    log("\nClass distribution:")
-    unique, counts = np.unique(labels, return_counts=True)
-    for label_id, count in zip(unique, counts):
-        class_name = label_map.get(label_id, f"Class_{label_id}")
-        log(f"  [{label_id:3d}] {class_name:25s}: {count:6d} ({count/len(labels)*100:5.1f}%)")
+    # log("\nClass distribution:")
+    # unique, counts = np.unique(labels, return_counts=True)
+    # for label_id, count in zip(unique, counts):
+    #     class_name = label_map.get(label_id, f"Class_{label_id}")
+    #     log(f"  [{label_id:3d}] {class_name:25s}: {count:6d} ({count/len(labels)*100:5.1f}%)")
 
     # Create dataloaders (惰性加载模式)
     log(f"\nCreating dataloaders...")

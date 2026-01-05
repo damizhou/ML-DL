@@ -1,18 +1,17 @@
 """
-临时训练脚本 - 等待 train.py 结束后自动执行
+Deep Fingerprinting Training Script
 
-功能：每 10 分钟检查 train.py 是否还在运行，结束后自动开始训练。
+Paper: Deep Fingerprinting: Undermining Website Fingerprinting Defenses with Deep Learning
+Conference: CCS 2018
 
 Usage:
-    python train_temp.py
+    python train.py
 """
 
 import os
 import sys
 import json
 import logging
-import subprocess
-import time
 import numpy as np
 import torch
 import torch.nn as nn
@@ -25,57 +24,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
 
 from Model_NoDef_pytorch import DFNoDefNet
-
-
-# =============================================================================
-# 进程监控功能
-# =============================================================================
-
-def is_train_running() -> bool:
-    """检查 train.py 是否正在运行（排除自己 train_temp.py）"""
-    try:
-        # Linux: 使用 pgrep 查找进程
-        result = subprocess.run(
-            ['pgrep', '-af', 'python'],
-            capture_output=True,
-            text=True
-        )
-        lines = result.stdout.strip().split('\n')
-        for line in lines:
-            # 匹配 train.py 但排除 train_temp.py
-            if 'train.py' in line and 'train_temp.py' not in line:
-                return True
-        return False
-    except FileNotFoundError:
-        # Windows fallback
-        result = subprocess.run(
-            ['tasklist', '/FI', 'IMAGENAME eq python.exe', '/FO', 'CSV'],
-            capture_output=True,
-            text=True
-        )
-        return 'python' in result.stdout.lower()
-
-
-def wait_for_train_to_finish(check_interval: int = 600):
-    """
-    等待 train.py 结束
-
-    Args:
-        check_interval: 检查间隔（秒），默认 600 秒 = 10 分钟
-    """
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 开始监控 train.py 进程...")
-    print(f"检查间隔: {check_interval // 60} 分钟")
-    print("-" * 50)
-
-    while True:
-        if is_train_running():
-            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] train.py 正在运行，{check_interval // 60} 分钟后再次检查...")
-            time.sleep(check_interval)
-        else:
-            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] train.py 已结束！")
-            break
-
-    print("-" * 50)
 
 
 # =============================================================================
@@ -129,8 +77,8 @@ class TrainArgs:
     # data_path: str = '/root/autodl-tmp/data/ustc'            # single_npz: data.npz + labels.json
     # data_path: str = '/root/autodl-tmp/data/cic_iot_2022'    # single_npz: data.npz + labels.json
     # data_path: str = '/root/autodl-tmp/data/cross_platform'  # single_npz: data.npz + labels.json
-    data_path: str = '/root/autodl-tmp/data/vpn'             # unified_dir: 多个 .npz 文件
-    # data_path: str = '/root/autodl-tmp/data/novpn'           # unified_dir: 多个 .npz 文件
+    # data_path: str = '/root/autodl-tmp/data/vpn'             # unified_dir: 多个 .npz 文件
+    data_path: str = '/root/autodl-tmp/data/novpn'           # unified_dir: 多个 .npz 文件
 
     # Model configuration (Paper Section 5.1, Table 1)
     input_len: int = 5000                       # Fixed input length (Paper: 5000)
@@ -138,7 +86,8 @@ class TrainArgs:
 
     # Training parameters (Paper Table 1)
     epochs: int = 100                            # Paper: 30
-    batch_size: int = 2048                       # Paper: 128
+    batch_size: int = 128                       # Actual batch size for GPU
+    accum_steps: int = 1                        # Gradient accumulation steps (effective batch = 2048/16 = 128)
     lr: float = 0.002                           # Paper: 0.002
     optimizer: str = 'adamax'                   # Paper: Adamax
 
@@ -151,7 +100,7 @@ class TrainArgs:
     min_samples: int = 10                       # Minimum samples per class
 
     # Paths
-    output_dir: str = './output_temp'           # 使用不同的输出目录
+    output_dir: str = './output'
     checkpoint: Optional[str] = None
 
     # Device
@@ -346,31 +295,44 @@ def create_dataloaders(sequences: List, labels: np.ndarray, args: TrainArgs) -> 
 # =============================================================================
 
 def train_one_epoch(model: nn.Module, loader: DataLoader, optimizer: torch.optim.Optimizer,
-                    criterion: nn.Module, device: torch.device, scaler) -> Tuple[float, float]:
-    """Train for one epoch."""
+                    criterion: nn.Module, device: torch.device, scaler, accum_steps: int = 1) -> Tuple[float, float]:
+    """Train for one epoch with gradient accumulation.
+
+    Args:
+        accum_steps: Number of gradient accumulation steps.
+                     Effective batch size = batch_size / accum_steps
+    """
     model.train()
     total_loss = 0.0
     correct = 0
     total = 0
 
-    for x, y in loader:
-        x, y = x.to(device), y.to(device)
+    optimizer.zero_grad()
 
-        optimizer.zero_grad()
+    for step, (x, y) in enumerate(loader):
+        x, y = x.to(device), y.to(device)
 
         with torch.amp.autocast('cuda', enabled=(scaler is not None)):
             logits = model(x)
             loss = criterion(logits, y)
+            # Scale loss by accumulation steps
+            loss = loss / accum_steps
 
         if scaler is not None:
             scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
         else:
             loss.backward()
-            optimizer.step()
 
-        total_loss += loss.item() * x.size(0)
+        # Update weights every accum_steps or at the last step
+        if (step + 1) % accum_steps == 0 or (step + 1) == len(loader):
+            if scaler is not None:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
+            optimizer.zero_grad()
+
+        total_loss += loss.item() * accum_steps * x.size(0)  # Undo the scaling for logging
         _, predicted = logits.max(1)
         correct += predicted.eq(y).sum().item()
         total += x.size(0)
@@ -464,7 +426,7 @@ def evaluate(model: nn.Module, loader: DataLoader, device: torch.device,
 def mode_train(args: TrainArgs):
     """Training mode."""
     log("=" * 70)
-    log("Deep Fingerprinting Training (train_temp.py)")
+    log("Deep Fingerprinting Training")
     log("Paper: CCS 2018")
     log("=" * 70)
 
@@ -493,11 +455,11 @@ def mode_train(args: TrainArgs):
     log(f"Kept classes: {num_classes}")
 
     # Print class distribution
-    log("\nClass distribution:")
-    unique, counts = np.unique(labels, return_counts=True)
-    for label_id, count in zip(unique, counts):
-        class_name = label_map.get(label_id, f"Class_{label_id}")
-        log(f"  [{label_id:3d}] {class_name:25s}: {count:6d} ({count/len(labels)*100:5.1f}%)")
+    # log("\nClass distribution:")
+    # unique, counts = np.unique(labels, return_counts=True)
+    # for label_id, count in zip(unique, counts):
+    #     class_name = label_map.get(label_id, f"Class_{label_id}")
+    #     log(f"  [{label_id:3d}] {class_name:25s}: {count:6d} ({count/len(labels)*100:5.1f}%)")
 
     # Create dataloaders (惰性加载模式)
     log(f"\nCreating dataloaders...")
@@ -524,12 +486,13 @@ def mode_train(args: TrainArgs):
     scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
 
     # Training configuration
+    effective_batch = args.batch_size // args.accum_steps
     log("\nTraining Configuration:")
-    log(f"  Epochs:        {args.epochs}")
-    log(f"  Batch size:    {args.batch_size}")
-    log(f"  Learning rate: {args.lr}")
-    log(f"  Optimizer:     {args.optimizer}")
-    log(f"  Input length:  {args.input_len}")
+    log(f"  Epochs:          {args.epochs}")
+    log(f"  Batch size:      {args.batch_size} (effective: {effective_batch} with {args.accum_steps} accum steps)")
+    log(f"  Learning rate:   {args.lr}")
+    log(f"  Optimizer:       {args.optimizer}")
+    log(f"  Input length:    {args.input_len}")
     log("=" * 70)
 
     # Training loop
@@ -539,7 +502,7 @@ def mode_train(args: TrainArgs):
     for epoch in range(1, args.epochs + 1):
         epoch_start = datetime.now()
 
-        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device, scaler)
+        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device, scaler, args.accum_steps)
         val_metrics = evaluate(model, val_loader, device, num_classes)
 
         epoch_time = (datetime.now() - epoch_start).total_seconds()
@@ -634,6 +597,62 @@ def mode_train(args: TrainArgs):
 
 
 # =============================================================================
+# Evaluation Mode
+# =============================================================================
+
+def mode_eval(args: TrainArgs):
+    """Evaluation mode."""
+    log("=" * 70)
+    log("Deep Fingerprinting Evaluation")
+    log("=" * 70)
+
+    # Device
+    if args.device == 'auto':
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    else:
+        device = torch.device(args.device)
+    log(f"Device: {device}")
+
+    # Checkpoint path
+    if args.checkpoint is None:
+        args.checkpoint = os.path.join(args.output_dir, 'best_model.pth')
+
+    log(f"Loading checkpoint: {args.checkpoint}")
+    checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
+
+    num_classes = checkpoint['num_classes']
+    label_map = checkpoint['label_map']
+
+    # Load data
+    sequences, labels, _ = load_dataset(args.data_path)
+    sequences, labels, label_map = filter_classes(sequences, labels, label_map, args.min_samples)
+
+    # Use all data for testing
+    test_dataset = DFDataset(sequences, labels, args.input_len)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+
+    # Create and load model
+    model = DFNoDefNet(num_classes=num_classes)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model = model.to(device)
+
+    # Evaluate
+    test_metrics = evaluate(model, test_loader, device, num_classes)
+
+    log("\n" + "=" * 70)
+    log("TEST RESULTS")
+    log("=" * 70)
+    log(f"Accuracy:  {test_metrics['accuracy']:.4f}")
+    log(f"Precision: {test_metrics['precision']:.4f}")
+    log(f"Recall:    {test_metrics['recall']:.4f}")
+    log(f"F1 Score:  {test_metrics['f1']:.4f}")
+    log(f"TPR_AVE:   {test_metrics['tpr_avg']:.4f}")
+    log(f"FPR_AVE:   {test_metrics['fpr_avg']:.4f}")
+
+    return test_metrics
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -642,6 +661,10 @@ def main():
 
     args = get_args()
     set_seed(args.seed)
+
+    # Create dataset-specific output directory to avoid conflicts
+    dataset_name = Path(args.data_path).name
+    args.output_dir = os.path.join(args.output_dir, dataset_name)
 
     os.makedirs(args.output_dir, exist_ok=True)
     log_path = setup_logging(args.output_dir)
@@ -656,6 +679,8 @@ def main():
 
     if args.mode == 'train':
         mode_train(args)
+    elif args.mode == 'eval':
+        mode_eval(args)
 
     end_time = datetime.now()
     elapsed_time = end_time - start_time
@@ -669,12 +694,4 @@ def main():
 
 
 if __name__ == '__main__':
-    # 1. 等待 train.py 结束
-    wait_for_train_to_finish(check_interval=600)  # 10 分钟
-
-    # 2. 执行训练
-    print("\n" + "=" * 70)
-    print("开始执行 train_temp.py 训练任务")
-    print("=" * 70 + "\n")
-
     main()
