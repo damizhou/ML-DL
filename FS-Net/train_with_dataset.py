@@ -17,6 +17,7 @@ import torch
 from datetime import datetime
 from dataclasses import dataclass
 from typing import List, Optional, Dict
+from pathlib import Path
 
 from models import create_fsnet, create_fsnet_nd
 from data import load_pickle_dataset, create_dataloaders
@@ -474,6 +475,10 @@ def main():
 
     # Set seed
     set_seed(args.seed)
+
+    # Create dataset-specific output directory to avoid conflicts
+    dataset_name = Path(args.data_path).stem.replace('_fsnet', '')
+    args.output_dir = os.path.join(args.output_dir, dataset_name)
 
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)

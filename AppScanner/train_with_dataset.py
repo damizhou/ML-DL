@@ -18,6 +18,7 @@ import torch
 from datetime import datetime
 from dataclasses import dataclass
 from typing import List, Optional
+from pathlib import Path
 
 from config import AppScannerConfig, get_config
 
@@ -430,6 +431,13 @@ def main():
 
     # Create config
     config = create_config_from_args(args)
+
+    # Create dataset-specific output directory to avoid conflicts
+    if args.features_path:
+        dataset_name = Path(args.features_path).stem.replace('_appscanner', '')
+    else:
+        dataset_name = Path(args.data_dir).name
+    config.output_dir = os.path.join(config.output_dir, dataset_name)
 
     # Create output directory
     os.makedirs(config.output_dir, exist_ok=True)

@@ -32,16 +32,16 @@ class DatasetConfig:
 
 # 配置要训练的数据集列表
 DATASETS: List[DatasetConfig] = [
-    DatasetConfig(name='novpn_top1000',data_path='/root/autodl-tmp/FS-Net/novpn_top1000/novpn_top1000_appscanner.pkl', ),
-    DatasetConfig(name='vpn_top1000', data_path='/root/autodl-tmp/FS-Net/vpn_top1000/vpn_top1000_appscanner.pkl', ),
-    DatasetConfig(name='novpn_top500', data_path='/root/autodl-tmp/FS-Net/novpn_top500/novpn_top500_appscanner.pkl', ),
-    DatasetConfig(name='vpn_top500', data_path='/root/autodl-tmp/FS-Net/vpn_top500/vpn_top500_appscanner.pkl', ),
-    DatasetConfig(name='novpn_top100', data_path='/root/autodl-tmp/FS-Net/novpn_top100/novpn_top100_appscanner.pkl', ),
-    DatasetConfig(name='vpn_top100', data_path='/root/autodl-tmp/FS-Net/vpn_top100/vpn_top100_appscanner.pkl', ),
-    DatasetConfig(name='novpn_top50',data_path='/root/autodl-tmp/FS-Net/novpn_top50/novpn_top50_appscanner.pkl',),
-    DatasetConfig(name='vpn_top50',data_path='/root/autodl-tmp/FS-Net/vpn_top50/vpn_top50_appscanner.pkl',),
-    # DatasetConfig(name='novpn_top10',data_path='/root/autodl-tmp/FS-Net/novpn_top10/novpn_top10_appscanner.pkl',),
-    DatasetConfig(name='vpn_top10',data_path='/root/autodl-tmp/FS-Net/vpn_top10/vpn_top10_appscanner.pkl',),
+    DatasetConfig(name='novpn_top1000',data_path='/root/autodl-tmp/FS-Net/data/novpn_top1000/novpn_top1000_fsnet.pkl', ),
+    DatasetConfig(name='vpn_top1000', data_path='/root/autodl-tmp/FS-Net/data/vpn_top1000/vpn_top1000_fsnet.pkl', ),
+    DatasetConfig(name='novpn_top500', data_path='/root/autodl-tmp/FS-Net/data/novpn_top500/novpn_top500_fsnet.pkl', ),
+    DatasetConfig(name='vpn_top500', data_path='/root/autodl-tmp/FS-Net/data/vpn_top500/vpn_top500_fsnet.pkl', ),
+    DatasetConfig(name='novpn_top100', data_path='/root/autodl-tmp/FS-Net/data/novpn_top100/novpn_top100_fsnet.pkl', ),
+    DatasetConfig(name='vpn_top100', data_path='/root/autodl-tmp/FS-Net/data/vpn_top100/vpn_top100_fsnet.pkl', ),
+    DatasetConfig(name='novpn_top50',data_path='/root/autodl-tmp/FS-Net/data/novpn_top50/novpn_top50_fsnet.pkl',),
+    DatasetConfig(name='vpn_top50',data_path='/root/autodl-tmp/FS-Net/data/vpn_top50/vpn_top50_fsnet.pkl',),
+    DatasetConfig(name='vpn_top10',data_path='/root/autodl-tmp/FS-Net/data/novpn_top10/novpn_top10_fsnet.pkl',),
+    DatasetConfig(name='vpn_top10',data_path='/root/autodl-tmp/FS-Net/data/vpn_top10/vpn_top10_fsnet.pkl',),
   ]
 
 
