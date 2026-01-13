@@ -1,5 +1,5 @@
 """
-DeepFingerprinting Multi-Dataset Concurrent Training Script
+AppScanner Multi-Dataset Concurrent Training Script
 
 并发训练多个数据集，最多同时运行 3 个训练任务。
 
@@ -25,26 +25,26 @@ from typing import List, Optional
 class DatasetConfig:
     """Single dataset configuration."""
     name: str                    # Dataset name (for display)
-    data_path: str               # Path to data directory
+    data_path: str               # Path to pickle file
 
 
 # 配置要训练的数据集列表
 DATASETS: List[DatasetConfig] = [
-    DatasetConfig(name='novpn_top1000', data_path='/root/autodl-tmp/DeepFingerprinting/data/novpn_top1000'),
-    DatasetConfig(name='vpn_top1000', data_path='/root/autodl-tmp/DeepFingerprinting/data/vpn_top1000'),
-    DatasetConfig(name='novpn_top500', data_path='/root/autodl-tmp/DeepFingerprinting/data/novpn_top500'),
-    DatasetConfig(name='vpn_top500', data_path='/root/autodl-tmp/DeepFingerprinting/data/vpn_top500'),
-    DatasetConfig(name='novpn_top100', data_path='/root/autodl-tmp/DeepFingerprinting/data/novpn_top100'),
-    DatasetConfig(name='vpn_top100', data_path='/root/autodl-tmp/DeepFingerprinting/data/vpn_top100'),
-    DatasetConfig(name='novpn_top50', data_path='/root/autodl-tmp/DeepFingerprinting/data/novpn_top50'),
-    DatasetConfig(name='vpn_top50', data_path='/root/autodl-tmp/DeepFingerprinting/data/vpn_top50'),
-    DatasetConfig(name='novpn_top10', data_path='/root/autodl-tmp/DeepFingerprinting/data/novpn_top10'),
-    DatasetConfig(name='vpn_top10', data_path='/root/autodl-tmp/DeepFingerprinting/data/vpn_top10'),
+    DatasetConfig(name='novpn_top1000', data_path='/root/autodl-tmp/AppScanner/data/novpn_top1000/novpn_top1000_appscanner.pkl'),
+    DatasetConfig(name='vpn_top1000', data_path='/root/autodl-tmp/AppScanner/data/vpn_top1000/vpn_top1000_appscanner.pkl'),
+    DatasetConfig(name='novpn_top500', data_path='/root/autodl-tmp/AppScanner/data/novpn_top500/novpn_top500_appscanner.pkl'),
+    DatasetConfig(name='vpn_top500', data_path='/root/autodl-tmp/AppScanner/data/vpn_top500/vpn_top500_appscanner.pkl'),
+    DatasetConfig(name='novpn_top100', data_path='/root/autodl-tmp/AppScanner/data/novpn_top100/novpn_top100_appscanner.pkl'),
+    DatasetConfig(name='vpn_top100', data_path='/root/autodl-tmp/AppScanner/data/vpn_top100/vpn_top100_appscanner.pkl'),
+    DatasetConfig(name='novpn_top50', data_path='/root/autodl-tmp/AppScanner/data/novpn_top50/novpn_top50_appscanner.pkl'),
+    DatasetConfig(name='vpn_top50', data_path='/root/autodl-tmp/AppScanner/data/vpn_top50/vpn_top50_appscanner.pkl'),
+    DatasetConfig(name='novpn_top10', data_path='/root/autodl-tmp/AppScanner/data/novpn_top10/novpn_top10_appscanner.pkl'),
+    DatasetConfig(name='vpn_top10', data_path='/root/autodl-tmp/AppScanner/data/vpn_top10/vpn_top10_appscanner.pkl'),
 ]
 
 
 # 并发数量
-MAX_WORKERS = 3
+MAX_WORKERS = 5
 
 # 输出根目录
 OUTPUT_ROOT = './output_multi'
@@ -111,7 +111,7 @@ def train_single_dataset(config: DatasetConfig) -> dict:
                         result['accuracy'] = float(line.split(':')[1].strip())
                     except:
                         pass
-                elif line.startswith('F1 Score:'):
+                elif line.startswith('F1 Score:') or line.startswith('F1:'):
                     try:
                         result['f1'] = float(line.split(':')[1].strip())
                     except:
@@ -149,7 +149,7 @@ def main():
     start_time = datetime.now()
 
     print("=" * 70)
-    print("DeepFingerprinting Multi-Dataset Concurrent Training")
+    print("AppScanner Multi-Dataset Concurrent Training")
     print("=" * 70)
     print(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Datasets to train: {len(DATASETS)}")
@@ -223,7 +223,7 @@ def main():
     # Save summary
     summary_path = os.path.join(OUTPUT_ROOT, 'summary.txt')
     with open(summary_path, 'w', encoding='utf-8') as f:
-        f.write(f"DeepFingerprinting Multi-Dataset Training Summary\n")
+        f.write(f"AppScanner Multi-Dataset Training Summary\n")
         f.write(f"{'='*70}\n")
         f.write(f"Start: {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"End:   {end_time.strftime('%Y-%m-%d %H:%M:%S')}\n")

@@ -143,8 +143,23 @@ class TrainArgs:
 
 
 def get_args() -> TrainArgs:
-    """Get training arguments."""
-    return TrainArgs()
+    """Get training arguments with optional command line override for features_path."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description='AppScanner Training Script')
+    parser.add_argument('--data_path', type=str, default=None,
+                        help='Path to pickle file (overrides default)')
+
+    args = parser.parse_args()
+
+    # Create TrainArgs with defaults
+    train_args = TrainArgs()
+
+    # Override features_path if provided
+    if args.data_path is not None:
+        train_args.features_path = args.data_path
+
+    return train_args
 
 
 def set_seed(seed: int):

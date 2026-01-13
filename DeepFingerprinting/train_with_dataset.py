@@ -86,7 +86,7 @@ class TrainArgs:
 
     # Training parameters (Paper Table 1)
     epochs: int = 100                            # Paper: 30
-    batch_size: int = 128                       # Actual batch size for GPU
+    batch_size: int = 128                       # 论文现实的代码中的数据值
     accum_steps: int = 1                        # Gradient accumulation steps (effective batch = 2048/16 = 128)
     lr: float = 0.002                           # Paper: 0.002
     optimizer: str = 'adamax'                   # Paper: Adamax
