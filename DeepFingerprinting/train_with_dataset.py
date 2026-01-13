@@ -112,8 +112,23 @@ class TrainArgs:
 
 
 def get_args() -> TrainArgs:
-    """Get training arguments."""
-    return TrainArgs()
+    """Get training arguments with optional command line override for data_path."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Deep Fingerprinting Training Script')
+    parser.add_argument('--data_path', type=str, default=None,
+                        help='Path to data directory (overrides default)')
+
+    args = parser.parse_args()
+
+    # Create TrainArgs with defaults
+    train_args = TrainArgs()
+
+    # Override data_path if provided
+    if args.data_path is not None:
+        train_args.data_path = args.data_path
+
+    return train_args
 
 
 def set_seed(seed: int):
