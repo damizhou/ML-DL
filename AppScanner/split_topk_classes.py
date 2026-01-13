@@ -24,7 +24,7 @@ from typing import Dict, Tuple
 # =============================================================================
 
 # 输入文件路径
-INPUT_PATH = './data/novpn/novpn_appscanner.pkl'
+INPUT_PATH = './data/vpn/vpn_appscanner.pkl'
 
 # 要处理的多个 Top-K 值
 TOP_K_LIST = [10, 50, 100, 500, 1000]

@@ -74,13 +74,24 @@ class TrainArgs:
     mode: str = 'train'
 
     # Data paths
+    data_path: str = ''
     # data_path: str = './data/iscxvpn/iscxvpn_fsnet.pkl'
     # data_path: str = './data/cic_iot_2022/cic_iot_2022_fsnet.pkl'  # Pre-extracted features
     # data_path: str = './data/cross_platform/cross_platform_fsnet.pkl'  # Pre-extracted features
     # data_path: str = './data/iscxtor/iscxtor_fsnet.pkl'  # Pre-extracted features
     # data_path: str = './data/ustc/ustc_fsnet.pkl'  # Pre-extracted features
     # data_path: str = './data/novpn/novpn_fsnet.pkl'  # Pre-extracted features
-    data_path: str = './data/vpn/vpn_fsnet.pkl'  # Pre-extracted features
+    # data_path: str = './data/vpn/vpn_fsnet.pkl'  # Pre-extracted features
+    # data_path: str = '/root/autodl-tmp/FS-Net/novpn_top10/novpn_top10_appscanner.pkl'  # Pre-extracted features
+    # data_path: str = '/root/autodl-tmp/FS-Net/vpn_top10/vpn_top10_appscanner.pkl'  # Pre-extracted features
+    # data_path: str = '/root/autodl-tmp/FS-Net/novpn_top50/novpn_top50_appscanner.pkl'  # Pre-extracted features
+    # data_path: str = '/root/autodl-tmp/FS-Net/vpn_top50/vpn_top50_appscanner.pkl'  # Pre-extracted features
+    # data_path: str = '/root/autodl-tmp/FS-Net/novpn_top100/novpn_top100_appscanner.pkl'  # Pre-extracted features
+    # data_path: str = '/root/autodl-tmp/FS-Net/vpn_top100/vpn_top100_appscanner.pkl'  # Pre-extracted features
+    # data_path: str = '/root/autodl-tmp/FS-Net/novpn_top500/novpn_top500_appscanner.pkl'  # Pre-extracted features
+    # data_path: str = '/root/autodl-tmp/FS-Net/vpn_top500/vpn_top500_appscanner.pkl'  # Pre-extracted features
+    # data_path: str = '/root/autodl-tmp/FS-Net/novpn_top1000/novpn_top1000_appscanner.pkl'  # Pre-extracted features
+    # data_path: str = '/root/autodl-tmp/FS-Net/vpn_top1000/vpn_top1000_appscanner.pkl'  # Pre-extracted features
 
     # Model configuration
     model_type: str = 'fsnet'               # 'fsnet' or 'fsnet_nd' (no decoder)
@@ -93,7 +104,7 @@ class TrainArgs:
 
     # Training parameters
     epochs: int = 100
-    batch_size: int = 2048                  # RTX 4090 (变长序列 padding 后显存占用大)
+    batch_size: int = 128                   # 论文现实的代码中的数据值
     lr: float = 0.0005                      # Learning rate (paper: 0.0005)
     patience: int = 20                      # Early stopping patience
 
@@ -118,8 +129,23 @@ class TrainArgs:
 
 
 def get_args() -> TrainArgs:
-    """Get training arguments."""
-    return TrainArgs()
+    """Get training arguments with optional command line override for data_path."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description='FS-Net Training Script')
+    parser.add_argument('--data_path', type=str, default=None,
+                        help='Path to pickle file (overrides default)')
+
+    args = parser.parse_args()
+
+    # Create TrainArgs with defaults
+    train_args = TrainArgs()
+
+    # Override data_path if provided
+    if args.data_path is not None:
+        train_args.data_path = args.data_path
+
+    return train_args
 
 
 def set_seed(seed: int):

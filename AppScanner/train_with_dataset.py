@@ -92,7 +92,16 @@ class TrainArgs:
     # features_path: str = './data/iscxtor/iscxtor_appscanner.pkl'  # Pre-extracted features
     # features_path: str = './data/ustc/ustc_appscanner.pkl'  # Pre-extracted features
     # features_path: str = './data/novpn/novpn_appscanner.pkl'  # Pre-extracted features
-    features_path: str = './data/vpn/vpn_appscanner.pkl'  # Pre-extracted features
+    # features_path: str = '/root/autodl-tmp/AppScanner/data/novpn_top10/novpn_top10_appscanner.pkl'  # Pre-extracted features
+    # features_path: str = '/root/autodl-tmp/AppScanner/data/vpn_top10/vpn_top10_appscanner.pkl'  # Pre-extracted features
+    # features_path: str = '/root/autodl-tmp/AppScanner/data/novpn_top50/novpn_top50_appscanner.pkl'  # Pre-extracted features
+    # features_path: str = '/root/autodl-tmp/AppScanner/data/vpn_top50/vpn_top50_appscanner.pkl'  # Pre-extracted features
+    features_path: str = '/root/autodl-tmp/AppScanner/data/novpn_top100/novpn_top100_appscanner.pkl'  # Pre-extracted features
+    # features_path: str = '/root/autodl-tmp/AppScanner/data/vpn_top100/vpn_top100_appscanner.pkl'  # Pre-extracted features
+    # features_path: str = '/root/autodl-tmp/AppScanner/data/novpn_top500/novpn_top500_appscanner.pkl'  # Pre-extracted features
+    # features_path: str = '/root/autodl-tmp/AppScanner/data/vpn_top500/vpn_top500_appscanner.pkl'  # Pre-extracted features
+    # features_path: str = '/root/autodl-tmp/AppScanner/data/novpn_top1000/novpn_top1000_appscanner.pkl'  # Pre-extracted features
+    # features_path: str = '/root/autodl-tmp/AppScanner/data/vpn_top1000/vpn_top1000_appscanner.pkl'  # Pre-extracted features
 
     # Model configuration
     model_type: str = 'nn'                      # 'nn', 'deep', or 'rf'

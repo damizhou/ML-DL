@@ -365,7 +365,7 @@ def load_vocab(csv_path: str) -> Dict[int, str]:
     with open(csv_path, 'r') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            vocab[int(row['category_id'])] = row['category_name']
+            vocab[int(row['id'])] = row['name']
     return vocab
 
 

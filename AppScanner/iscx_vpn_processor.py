@@ -40,8 +40,8 @@ except ImportError:
 # =============================================================================
 
 # Input paths
-LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/ISCXVPN/artifacts/iscx/label_map.csv"
-VOCAB_PATH = "/home/pcz/DL/ML_DL/DeepFingerprinting/DatasetDealer/ISCXVPN/artifacts/iscx/service_vocab.csv"
+LABEL_MAP_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-VPN-NonVPN-2016/label_map.csv"
+VOCAB_PATH = "/home/pcz/DL/ML_DL/public_dataset/ISCX-VPN-NonVPN-2016/service_vocab.csv"
 
 # Output path
 OUTPUT_DIR = "/home/pcz/DL/ML_DL/AppScanner/data/iscxvpn"
@@ -365,7 +365,7 @@ def load_vocab(csv_path: str) -> Dict[int, str]:
     with open(csv_path, 'r') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            vocab[int(row['service_id'])] = row['service']
+            vocab[int(row['id'])] = row['name']
     return vocab
 
 

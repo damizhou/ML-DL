@@ -30,7 +30,7 @@ from typing import Dict, List, Tuple
 
 # 输入文件路径
 # INPUT_PATH = './data/novpn/novpn_fsnet.pkl'
-INPUT_PATH = './data/vpn/vpn_fsnet.pkl'
+INPUT_PATH = './data/novpn/data.npz'
 
 # 要处理的多个 Top-K 值
 TOP_K_LIST = [10, 50, 100, 500, 1000]
@@ -46,20 +46,53 @@ OUTPUT_DIR = None
 # 主逻辑
 # =============================================================================
 
-def load_pkl(path: str) -> Tuple[List[np.ndarray], np.ndarray, Dict[int, str]]:
-    """加载 FS-Net PKL 数据集。
+def load_data(path: str) -> Tuple[List[np.ndarray], np.ndarray, Dict[int, str]]:
+    """加载数据集，支持 PKL 和 NPZ 格式。
 
     Returns:
         sequences: 变长序列列表
         labels: 标签数组
         label_map: 标签映射字典
     """
-    with open(path, 'rb') as f:
-        data = pickle.load(f)
+    path_lower = path.lower()
+    path_obj = Path(path)
 
-    sequences = data['sequences']
-    labels = data['labels']
-    label_map = data['label_map']
+    if path_lower.endswith('.npz'):
+        # NPZ 格式 (NumPy 归档)
+        data = np.load(path, allow_pickle=True)
+        sequences = list(data['sequences']) if 'sequences' in data else list(data['X'])
+        labels = data['labels'] if 'labels' in data else data['y']
+
+        # NPZ 中 label_map 可能是 0-d 数组包装的字典
+        if 'label_map' in data:
+            label_map = data['label_map']
+            if isinstance(label_map, np.ndarray):
+                label_map = label_map.item()  # 从 0-d 数组提取字典
+        else:
+            # 尝试读取同目录下的 labels.json
+            labels_json_path = path_obj.parent / 'labels.json'
+            if labels_json_path.exists():
+                with open(labels_json_path, 'r', encoding='utf-8') as f:
+                    labels_data = json.load(f)
+                # 支持 id2label 或 label2id 格式
+                if 'id2label' in labels_data:
+                    label_map = {int(k): v for k, v in labels_data['id2label'].items()}
+                elif 'label2id' in labels_data:
+                    label_map = {v: k for k, v in labels_data['label2id'].items()}
+                else:
+                    label_map = {int(k): v for k, v in labels_data.items()}
+                print(f"  已加载标签映射: {labels_json_path}")
+            else:
+                # 如果没有 label_map，自动生成
+                unique_labels = np.unique(labels)
+                label_map = {int(l): f"class_{l}" for l in unique_labels}
+    else:
+        # PKL 格式
+        with open(path, 'rb') as f:
+            data = pickle.load(f)
+        sequences = data['sequences']
+        labels = data['labels']
+        label_map = data['label_map']
 
     return sequences, labels, label_map
 
@@ -246,7 +279,7 @@ def main():
 
     # 只加载一次数据
     print(f"\n加载数据...")
-    sequences, labels, label_map = load_pkl(INPUT_PATH)
+    sequences, labels, label_map = load_data(INPUT_PATH)
     print(f"序列数量: {len(sequences):,}")
     print(f"总类别数: {len(label_map):,}")
 
