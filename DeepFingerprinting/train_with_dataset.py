@@ -196,30 +196,42 @@ def load_unified_dir(data_path: Path) -> Tuple[List[np.ndarray], np.ndarray, Dic
 
 
 def load_single_npz(data_path: Path) -> Tuple[List[np.ndarray], np.ndarray, Dict[int, str]]:
-    """Load data from single NPZ format (data.npz + labels.json)."""
+    """Load data from single NPZ format (data.npz with sequences/labels/label_map)."""
     npz_file = data_path / 'data.npz'
-    label_file = data_path / 'labels.json'
 
     data = np.load(npz_file, allow_pickle=True)
-    X = data['X']
-    y = data['y']
 
-    sequences = [np.array(x, dtype=np.int8) for x in X]
-    labels = np.array(y, dtype=np.int64)
-
-    # Load label map
-    label_map = {}
-    if label_file.exists():
-        with open(label_file, 'r') as f:
-            label_info = json.load(f)
-            if 'id2label' in label_info:
-                label_map = {int(k): v for k, v in label_info['id2label'].items()}
-            else:
-                unique_labels = np.unique(labels)
-                label_map = {int(i): str(i) for i in unique_labels}
+    # Support both key formats: sequences/labels or X/y
+    if 'sequences' in data:
+        raw_sequences = data['sequences']
+        raw_labels = data['labels']
+        # Try to get label_map from npz, otherwise from json
+        if 'label_map' in data:
+            label_map = dict(data['label_map'].item()) if hasattr(data['label_map'], 'item') else dict(data['label_map'])
+        else:
+            label_map = None
     else:
-        unique_labels = np.unique(labels)
-        label_map = {int(i): str(i) for i in unique_labels}
+        raw_sequences = data['X']
+        raw_labels = data['y']
+        label_map = None
+
+    sequences = [np.array(x, dtype=np.int8) for x in raw_sequences]
+    labels = np.array(raw_labels, dtype=np.int64)
+
+    # Load label map from json if not in npz
+    if label_map is None:
+        label_file = data_path / 'labels.json'
+        if label_file.exists():
+            with open(label_file, 'r') as f:
+                label_info = json.load(f)
+                if 'id2label' in label_info:
+                    label_map = {int(k): v for k, v in label_info['id2label'].items()}
+                else:
+                    unique_labels = np.unique(labels)
+                    label_map = {int(i): str(i) for i in unique_labels}
+        else:
+            unique_labels = np.unique(labels)
+            label_map = {int(i): str(i) for i in unique_labels}
 
     return sequences, labels, label_map
 

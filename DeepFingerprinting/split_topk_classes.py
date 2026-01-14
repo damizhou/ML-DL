@@ -29,8 +29,8 @@ from typing import Dict, List, Tuple
 # =============================================================================
 
 # 输入文件路径
-# INPUT_PATH = './data/novpn/novpn_fsnet.pkl'
-INPUT_PATH = './data/novpn/data.npz'
+# INPUT_PATH = './data/novpn/novpn_deepfingerprinting.npz'
+INPUT_PATH = './data/vpn/data.npz'
 
 # 要处理的多个 Top-K 值
 TOP_K_LIST = [10, 50, 100, 500, 1000]
@@ -233,7 +233,7 @@ def process_single_topk(
     else:
         out_dir = input_path.parent.parent / f"{parent_name}_top{top_k}"
 
-    output_name = f"{parent_name}_top{top_k}_fsnet.pkl"
+    output_name = f"{parent_name}_top{top_k}_deepfingerprinting.npz"
     output_path = out_dir / output_name
 
     # 保存 PKL
