@@ -37,7 +37,7 @@ class DatasetConfig:
 
 
 # 数据根目录
-DATA_ROOT = './data'
+DATA_ROOT = '/root/autodl-tmp/YaTc/data'
 
 # 预训练模型路径（全局默认）
 PRETRAINED_MODEL = './output_dir/pretrained.pth'

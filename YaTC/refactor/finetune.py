@@ -148,21 +148,28 @@ def main():
     # 解析命令行参数（如果有的话）
     args = parse_args()
 
-    # 使用命令行参数覆盖硬编码配置（如果提供了参数）
+    # 确定实际使用的数据路径
     if args.data_path:
         # 如果提供了 data_path，自动拼接 train/val/test 子目录
         global USE_SPLIT_DIR, TRAIN_PATH, VAL_PATH, TEST_PATH
         USE_SPLIT_DIR = True
-        data_root = Path(args.data_path)
-        TRAIN_PATH = data_root / "train"
-        VAL_PATH = data_root / "val"
-        TEST_PATH = data_root / "test"
+        data_path = Path(args.data_path)
+        TRAIN_PATH = data_path / "train"
+        VAL_PATH = data_path / "val"
+        TEST_PATH = data_path / "test"
+    else:
+        data_path = DATA_PATH
+
+    # 创建数据集特定的输出目录 (类似 FS-Net)
+    # 从数据路径提取数据集名称，去掉 _split 后缀
+    dataset_name = data_path.name.replace('_split', '')
+    output_dir = Path(__file__).parent.parent / "output" / dataset_name
 
     # 记录开始时间
     start_time = datetime.now()
 
     # Setup logging
-    log_path = setup_logging(OUTPUT_DIR)
+    log_path = setup_logging(output_dir)
 
     device = torch.device(DEVICE)
 
@@ -251,8 +258,8 @@ def main():
     log("YaTC Fine-tuning")
     log("=" * 60)
     log(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    log(f"Data path: {DATA_PATH}")
-    log(f"Output dir: {OUTPUT_DIR}")
+    log(f"Data path: {data_path}")
+    log(f"Output dir: {output_dir}")
     log(f"Device: {DEVICE}")
     log(f"Data format: {'NPZ' if USE_NPZ else 'PNG'}")
     log(f"Log file: {log_path}")
@@ -318,7 +325,7 @@ def main():
 
     # Training loop
     best_val_acc = 0.0
-    best_model_path = OUTPUT_DIR / "yatc_best.pth"
+    best_model_path = output_dir / "yatc_best.pth"
     eval_loader = val_loader if val_loader is not None else test_loader
 
     log(f"\nStarting training for {EPOCHS} epochs...")
@@ -374,7 +381,7 @@ def main():
 
         # Save periodic checkpoint
         if (epoch + 1) % SAVE_FREQ_EPOCHS == 0:
-            checkpoint_path = OUTPUT_DIR / f'finetune_epoch{epoch+1:04d}.pth'
+            checkpoint_path = output_dir / f'finetune_epoch{epoch+1:04d}.pth'
             save_checkpoint(
                 model=model,
                 optimizer=optimizer,
@@ -431,13 +438,13 @@ def main():
 
     # Save training history
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    history_path = OUTPUT_DIR / f"finetune_history_{timestamp}.json"
+    history_path = output_dir / f"finetune_history_{timestamp}.json"
     with open(history_path, 'w', encoding='utf-8') as f:
         json.dump(history, f, indent=2)
     log(f"Training history saved to: {history_path}")
 
     # Save final model with metadata
-    final_model_path = OUTPUT_DIR / "yatc_final.pth"
+    final_model_path = output_dir / "yatc_final.pth"
     torch.save({
         'model_state_dict': model.state_dict(),
         'num_classes': num_classes,
