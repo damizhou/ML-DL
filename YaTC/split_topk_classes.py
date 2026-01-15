@@ -51,11 +51,11 @@ from typing import Dict, List, Tuple, Optional
 # =============================================================================
 
 # 输入目录（包含 train/val/test 子目录的已划分数据集）
-INPUT_DIR = "./data/vpn_unified_output_split"
+INPUT_DIR = "./data/vpn_split"
 # INPUT_DIR = "./data/novpn_unified_output_split"
 
 # 要处理的多个 Top-K 值
-TOP_K_LIST = [10, 50, 100, 500, 1000]
+TOP_K_LIST = [10, 50, 100, 500]
 
 # 每个类别的最小样本数 (低于此数的类别不参与排序)
 MIN_SAMPLES = 10

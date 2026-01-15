@@ -12,16 +12,14 @@ Usage:
     # 从头训练（不使用预训练）
     python finetune.py
 
-    # 使用已划分的数据集目录（供 train_multi_datasets.py 调用）
-    python finetune.py --data_path ./data/novpn_top100_split --output_dir ./output
-    # 会自动拼接 train/val/test 子目录
+    # 使用 NPZ 格式数据
+    python finetune.py --npz --pretrained ../checkpoints/pretrained.pth
 """
 
 import os
 import sys
 import json
 import logging
-import argparse
 from pathlib import Path
 from datetime import datetime
 
@@ -93,7 +91,7 @@ TEST_PATH = None
 PRETRAINED_PATH = Path(__file__).parent.parent / "checkpoints" / "pretrained.pth"
 
 # 输出目录
-OUTPUT_DIR = Path(__file__).parent.parent / "checkpoints"
+OUTPUT_DIR = Path(__file__).parent.parent / "output" / DATA_PATH.name.replace('_split', '')
 
 # 训练参数
 BATCH_SIZE = 64
@@ -126,52 +124,17 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 # =============================================================================
-# 命令行参数解析（仅用于路径配置）
-# =============================================================================
-
-def parse_args():
-    """解析命令行参数（仅支持路径相关参数）"""
-    parser = argparse.ArgumentParser(description='YaTC Fine-tuning')
-
-    # 数据路径参数
-    parser.add_argument('--data_path', type=str, default=None,
-                        help='Path to dataset directory (parent of train/val/test subdirs)')
-    parser.add_argument('--num_classes', type=int, default=None,
-                        help='Number of classes (auto-detect if None)')
-
-    return parser.parse_args()
-
-
-# =============================================================================
 # 微调
 # =============================================================================
 
 def main():
-    # 解析命令行参数（如果有的话）
-    args = parse_args()
-
-    # 确定实际使用的数据路径
-    if args.data_path:
-        # 如果提供了 data_path，自动拼接 train/val/test 子目录
-        global USE_SPLIT_DIR, TRAIN_PATH, VAL_PATH, TEST_PATH
-        USE_SPLIT_DIR = True
-        data_path = Path(args.data_path)
-        TRAIN_PATH = data_path / "train"
-        VAL_PATH = data_path / "val"
-        TEST_PATH = data_path / "test"
-    else:
-        data_path = DATA_PATH
-
-    # 创建数据集特定的输出目录 (类似 FS-Net)
-    # 从数据路径提取数据集名称，去掉 _split 后缀
-    dataset_name = data_path.name.replace('_split', '')
-    output_dir = Path(__file__).parent.parent / "output" / dataset_name
-
+    global OUTPUT_DIR
+    OUTPUT_DIR = Path(__file__).parent.parent / "output" / DATA_PATH.name.replace('_split', '')
     # 记录开始时间
     start_time = datetime.now()
 
     # Setup logging
-    log_path = setup_logging(output_dir)
+    log_path = setup_logging(OUTPUT_DIR)
 
     device = torch.device(DEVICE)
 
@@ -183,7 +146,7 @@ def main():
     # Create dataloaders
     if USE_SPLIT_DIR and TRAIN_PATH and VAL_PATH and TEST_PATH:
         # 使用已划分的目录结构
-        train_loader, num_classes_detected = build_split_dataloader(
+        train_loader, num_classes = build_split_dataloader(
             TRAIN_PATH,
             batch_size=BATCH_SIZE,
             num_workers=NUM_WORKERS,
@@ -201,8 +164,6 @@ def main():
             num_workers=NUM_WORKERS,
             shuffle=False
         )
-        # 使用命令行参数指定的类别数，或使用自动检测的
-        num_classes = args.num_classes if args.num_classes else num_classes_detected
         id2label = test_loader.dataset.id2label
     elif USE_NPZ:
         # 运行时划分
@@ -260,8 +221,8 @@ def main():
     log("YaTC Fine-tuning")
     log("=" * 60)
     log(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    log(f"Data path: {data_path}")
-    log(f"Output dir: {output_dir}")
+    log(f"Data path: {DATA_PATH}")
+    log(f"Output dir: {OUTPUT_DIR}")
     log(f"Device: {DEVICE}")
     log(f"Data format: {'NPZ' if USE_NPZ else 'PNG'}")
     log(f"Log file: {log_path}")
@@ -327,7 +288,7 @@ def main():
 
     # Training loop
     best_val_acc = 0.0
-    best_model_path = output_dir / "yatc_best.pth"
+    best_model_path = OUTPUT_DIR / "yatc_best.pth"
     eval_loader = val_loader if val_loader is not None else test_loader
 
     log(f"\nStarting training for {EPOCHS} epochs...")
@@ -383,7 +344,7 @@ def main():
 
         # Save periodic checkpoint
         if (epoch + 1) % SAVE_FREQ_EPOCHS == 0:
-            checkpoint_path = output_dir / f'finetune_epoch{epoch+1:04d}.pth'
+            checkpoint_path = OUTPUT_DIR / f'finetune_epoch{epoch+1:04d}.pth'
             save_checkpoint(
                 model=model,
                 optimizer=optimizer,
@@ -440,13 +401,13 @@ def main():
 
     # Save training history
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    history_path = output_dir / f"finetune_history_{timestamp}.json"
+    history_path = OUTPUT_DIR / f"finetune_history_{timestamp}.json"
     with open(history_path, 'w', encoding='utf-8') as f:
         json.dump(history, f, indent=2)
     log(f"Training history saved to: {history_path}")
 
     # Save final model with metadata
-    final_model_path = output_dir / "yatc_final.pth"
+    final_model_path = OUTPUT_DIR / "yatc_final.pth"
     torch.save({
         'model_state_dict': model.state_dict(),
         'num_classes': num_classes,
