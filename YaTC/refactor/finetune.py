@@ -12,14 +12,16 @@ Usage:
     # 从头训练（不使用预训练）
     python finetune.py
 
-    # 使用 NPZ 格式数据
-    python finetune.py --npz --pretrained ../checkpoints/pretrained.pth
+    # 使用已划分的数据集目录（供 train_multi_datasets.py 调用）
+    python finetune.py --data_path ./data/novpn_top100_split --output_dir ./output
+    # 会自动拼接 train/val/test 子目录
 """
 
 import os
 import sys
 import json
 import logging
+import argparse
 from pathlib import Path
 from datetime import datetime
 
@@ -124,10 +126,38 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 # =============================================================================
+# 命令行参数解析（仅用于路径配置）
+# =============================================================================
+
+def parse_args():
+    """解析命令行参数（仅支持路径相关参数）"""
+    parser = argparse.ArgumentParser(description='YaTC Fine-tuning')
+
+    # 数据路径参数
+    parser.add_argument('--data_path', type=str, default=None,
+                        help='Path to dataset directory (parent of train/val/test subdirs)')
+
+    return parser.parse_args()
+
+
+# =============================================================================
 # 微调
 # =============================================================================
 
 def main():
+    # 解析命令行参数（如果有的话）
+    args = parse_args()
+
+    # 使用命令行参数覆盖硬编码配置（如果提供了参数）
+    if args.data_path:
+        # 如果提供了 data_path，自动拼接 train/val/test 子目录
+        global USE_SPLIT_DIR, TRAIN_PATH, VAL_PATH, TEST_PATH
+        USE_SPLIT_DIR = True
+        data_root = Path(args.data_path)
+        TRAIN_PATH = data_root / "train"
+        VAL_PATH = data_root / "val"
+        TEST_PATH = data_root / "test"
+
     # 记录开始时间
     start_time = datetime.now()
 
@@ -144,7 +174,7 @@ def main():
     # Create dataloaders
     if USE_SPLIT_DIR and TRAIN_PATH and VAL_PATH and TEST_PATH:
         # 使用已划分的目录结构
-        train_loader, num_classes = build_split_dataloader(
+        train_loader, num_classes_detected = build_split_dataloader(
             TRAIN_PATH,
             batch_size=BATCH_SIZE,
             num_workers=NUM_WORKERS,
@@ -162,6 +192,8 @@ def main():
             num_workers=NUM_WORKERS,
             shuffle=False
         )
+        # 使用命令行参数指定的类别数，或使用自动检测的
+        num_classes = args.num_classes if args.num_classes else num_classes_detected
         id2label = test_loader.dataset.id2label
     elif USE_NPZ:
         # 运行时划分

@@ -29,8 +29,7 @@ from typing import Dict, List, Tuple
 # =============================================================================
 
 # 输入文件路径
-# INPUT_PATH = './data/novpn/novpn_deepfingerprinting.npz'
-INPUT_PATH = './data/vpn/data.npz'
+INPUT_PATH = './data/novpn/data.npz'
 
 # 要处理的多个 Top-K 值
 TOP_K_LIST = [10, 50, 100, 500, 1000]
@@ -174,26 +173,24 @@ def select_topk_classes(
     return filtered_sequences, filtered_labels, new_label_map
 
 
-def save_pkl(
+def save_npz(
     sequences: List[np.ndarray],
     labels: np.ndarray,
-    label_map: Dict[int, str],
     output_path: str,
-    source_info: dict = None
 ):
-    """保存为 FS-Net PKL 格式。"""
-    data = {
-        'sequences': sequences,
-        'labels': labels,
-        'label_map': label_map,
-    }
+    """保存为 NPZ 格式，与原始 data.npz 格式一致。
 
-    if source_info:
-        data['source_info'] = source_info
+    输出格式:
+        X: shape=(N,), dtype=object, 每个元素是变长 ndarray
+        y: shape=(N,), dtype=int64
+    """
+    # 将 list 转换为 object 类型的 numpy 数组（保持与原始格式一致）
+    X = np.empty(len(sequences), dtype=object)
+    for i, seq in enumerate(sequences):
+        X[i] = seq
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    with open(output_path, 'wb') as f:
-        pickle.dump(data, f)
+    np.savez(output_path, X=X, y=labels)
 
     print(f"\n已保存: {output_path}")
     print(f"  文件大小: {os.path.getsize(output_path) / 1024 / 1024:.2f} MB")
@@ -233,22 +230,14 @@ def process_single_topk(
     else:
         out_dir = input_path.parent.parent / f"{parent_name}_top{top_k}"
 
-    output_name = f"{parent_name}_top{top_k}_deepfingerprinting.npz"
+    output_name = f"data.npz"
     output_path = out_dir / output_name
 
-    # 保存 PKL
-    save_pkl(
+    # 保存 NPZ（格式与原始一致）
+    save_npz(
         filtered_sequences,
         filtered_labels,
-        new_label_map,
         str(output_path),
-        source_info={
-            'source_file': str(input_path),
-            'top_k': top_k,
-            'min_samples': min_samples,
-            'original_classes': len(label_map),
-            'original_samples': len(labels),
-        }
     )
 
     # 保存 labels.json 方便查看
