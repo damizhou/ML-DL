@@ -112,7 +112,7 @@ DATASETS: List[DatasetConfig] = [
 MAX_WORKERS = 3
 
 # 输出根目录
-OUTPUT_ROOT = './output_multi'
+OUTPUT_ROOT = './YaTC/output_multi'
 
 
 # =============================================================================

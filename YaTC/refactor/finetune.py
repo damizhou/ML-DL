@@ -136,6 +136,8 @@ def parse_args():
     # 数据路径参数
     parser.add_argument('--data_path', type=str, default=None,
                         help='Path to dataset directory (parent of train/val/test subdirs)')
+    parser.add_argument('--num_classes', type=int, default=None,
+                        help='Number of classes (auto-detect if None)')
 
     return parser.parse_args()
 
