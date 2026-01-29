@@ -4,21 +4,21 @@ DeepFingerprinting Ablation Study Training Script
 实现三个消融实验：
 
 实验1 (Baseline: 首页指纹):
-    训练集: 数据集B (仅首页) 70%
-    验证集: 数据集B (仅首页) 15%
-    测试集: 数据集B (子页面) + 数据集A (连续会话) 15%
+    训练集: 数据集B (仅首页) 80%
+    验证集: 数据集B (仅首页) 10%
+    测试集: 数据集B (子页面) + 数据集A (连续会话) 10%
     预期: 在首页上表现好，在子页面和连续会话上表现差
 
 实验2 (Ours: 全站指纹):
-    训练集: 数据集B (首页 + 子页面) 70%
-    验证集: 数据集B (首页 + 子页面) 15%
+    训练集: 数据集B (首页 + 子页面) 80%
+    验证集: 数据集B (首页 + 子页面) 10%
     测试集: 数据集A (连续会话) 100%
     预期: 跨场景泛化能力强，在连续会话上表现好
 
 实验3 (进阶: 直接用连续会话训练):
-    训练集: 数据集A 70%
-    验证集: 数据集A 15%
-    测试集: 数据集A 15%
+    训练集: 数据集A 80%
+    验证集: 数据集A 10%
+    测试集: 数据集A 10%
     预期: 对比实验2，验证细粒度采集的有效性
 
 Usage:
@@ -199,8 +199,8 @@ def align_labels(
 def split_by_batch(
     sequences: List,
     labels: np.ndarray,
-    train_ratio: float = 0.70,
-    val_ratio: float = 0.15,
+    train_ratio: float = 0.80,
+    val_ratio: float = 0.10,
     seed: int = 42
 ) -> Tuple[Tuple[List, np.ndarray], Tuple[List, np.ndarray], Tuple[List, np.ndarray]]:
     """
@@ -550,8 +550,8 @@ def experiment_1_baseline(
     """
     实验1: 基准线 - 仅首页指纹
 
-    训练集: 数据集B (仅首页) 70%
-    验证集: 数据集B (仅首页) 15%
+    训练集: 数据集B (仅首页) 80%
+    验证集: 数据集B (仅首页) 10%
     测试集: 数据集B (子页面) + 数据集A (连续会话)
     """
     logger.info("=" * 70)
@@ -642,8 +642,8 @@ def experiment_2_proposed(
     """
     实验2: 提出的方法 - 全站指纹
 
-    训练集: 数据集B (首页 + 子页面) 70%
-    验证集: 数据集B (首页 + 子页面) 15%
+    训练集: 数据集B (首页 + 子页面) 80%
+    验证集: 数据集B (首页 + 子页面) 10%
     测试集: 数据集A (连续会话) 100%
     """
     logger.info("=" * 70)
@@ -738,9 +738,9 @@ def experiment_3_aggregate(
     """
     实验3: 进阶对比 - 直接用连续会话训练
 
-    训练集: 数据集A 70%
-    验证集: 数据集A 15%
-    测试集: 数据集A 15%
+    训练集: 数据集A 80%
+    验证集: 数据集A 10%
+    测试集: 数据集A 10%
     """
     logger.info("=" * 70)
     logger.info("实验3: 进阶对比 - 连续会话训练")
@@ -849,6 +849,7 @@ def main():
     logger.info(f"Batch size: {args.batch_size}")
     logger.info(f"Learning rate: {args.lr}")
     logger.info(f"Input length: {args.input_len}")
+    logger.info(f"Split ratio: train {TRAIN_RATIO:.2f} | val {VAL_RATIO:.2f} | test {TEST_RATIO:.2f}")
 
     # Set random seed
     torch.manual_seed(args.seed)

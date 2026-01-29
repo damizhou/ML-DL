@@ -674,6 +674,7 @@ def main():
     logger.info(f"Batch size: {args.batch_size}")
     logger.info(f"Num workers: {args.num_workers}")
     logger.info(f"Learning rate: {args.lr}")
+    logger.info(f"Split ratio: train {TRAIN_RATIO:.2f} | val {VAL_RATIO:.2f} | test {TEST_RATIO:.2f}")
 
     # Set random seed
     torch.manual_seed(args.seed)
