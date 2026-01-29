@@ -4,26 +4,26 @@ FS-Net Ablation Study Training Script
 实现三个消融实验：
 
 实验1 (Baseline: 首页指纹):
-    训练集: 数据集B (仅首页) 70%
-    验证集: 数据集B (仅首页) 15%
-    测试集: 数据集B (子页面) + 数据集A (连续会话) 15%
+    训练集: 数据集B (仅首页) 80%
+    验证集: 数据集B (仅首页) 10%
+    测试集: 数据集B (子页面) + 数据集A (连续会话) 10%
     预期: 在首页上表现好，在子页面和连续会话上表现差
 
 实验2 (Ours: 全站指纹):
-    训练集: 数据集B (首页 + 子页面) 70%
-    验证集: 数据集B (首页 + 子页面) 15%
+    训练集: 数据集B (首页 + 子页面) 80%
+    验证集: 数据集B (首页 + 子页面) 10%
     测试集: 数据集A (连续会话) 100%
     预期: 跨场景泛化能力强，在连续会话上表现好
 
 实验3 (进阶: 直接用连续会话训练):
-    训练集: 数据集A 70%
-    验证集: 数据集A 15%
-    测试集: 数据集A 15%
+    训练集: 数据集A 80%
+    验证集: 数据集A 10%
+    测试集: 数据集A 10%
     预期: 对比实验2，验证细粒度采集的有效性
 
 Usage:
     python train_ablation.py --experiment 1
-    python train_ablation.py --experiment 2 --epochs 200
+    python train_ablation.py --experiment 2 --epochs 200 --num_workers 4
     python train_ablation.py --experiment 3 --batch_size 1024
 """
 
@@ -33,39 +33,38 @@ import pickle
 import logging
 from pathlib import Path
 from typing import Dict, Tuple, Any, List
+from datetime import datetime
 
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torch.nn.utils.rnn import pad_sequence
 
-from models import FSNet, create_fsnet
+from models import create_fsnet
 from data import SequenceDataset, collate_fn
-from engine import train_one_epoch, evaluate, save_checkpoint
-from config import FSNetConfig, TrainConfig
+from engine import train_one_epoch, evaluate, save_checkpoint, load_checkpoint
 
 
 # =============================================================================
 # Configuration
 # =============================================================================
 
-DATA_DIR = "/home/pcz/DL/ML_DL/FS-Net/data/ablation_study"
-OUTPUT_DIR = "/home/pcz/DL/ML_DL/FS-Net/checkpoints/ablation_study"
+DATA_DIR = "/root/autodl-tmp/FS-Net/data/ablation_study"
+OUTPUT_DIR = "/root/FS-Net/checkpoints/ablation_study"
 
 # 按批次划分比例 (避免数据泄露)
-TRAIN_RATIO = 0.70
-VAL_RATIO = 0.15
-TEST_RATIO = 0.15
+TRAIN_RATIO = 0.80
+VAL_RATIO = 0.10
+TEST_RATIO = 0.10
 
 
 # =============================================================================
 # Logging Setup
 # =============================================================================
 
-def setup_logging(experiment_name: str):
+def setup_logging(output_dir: str):
     """Setup logging configuration."""
-    log_dir = Path(OUTPUT_DIR) / experiment_name
+    log_dir = Path(output_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
 
     log_file = log_dir / 'training.log'
@@ -211,9 +210,11 @@ def create_dataloaders(
     val_data: Tuple[List, np.ndarray],
     test_data: Tuple[List, np.ndarray],
     batch_size: int = 128,
-    num_workers: int = 0,
+    num_workers: int = 4,
     max_packet_len: int = 1500,
     use_direction: bool = True,
+    prefetch_factor: int = 2,
+    persistent_workers: bool = True,
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """Create dataloaders from split data."""
 
@@ -225,32 +226,38 @@ def create_dataloaders(
     val_dataset = SequenceDataset(val_sequences, val_labels, max_packet_len, use_direction)
     test_dataset = SequenceDataset(test_sequences, test_labels, max_packet_len, use_direction)
 
+    use_workers = num_workers > 0
+    loader_kwargs = {
+        'num_workers': num_workers,
+        'pin_memory': True,
+        'persistent_workers': persistent_workers and use_workers,
+    }
+    if use_workers:
+        loader_kwargs['prefetch_factor'] = prefetch_factor
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=num_workers,
         collate_fn=collate_fn,
-        pin_memory=True,
         drop_last=True,
+        **loader_kwargs,
     )
 
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
         collate_fn=collate_fn,
-        pin_memory=True,
+        **loader_kwargs,
     )
 
     test_loader = DataLoader(
         test_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
         collate_fn=collate_fn,
-        pin_memory=True,
+        **loader_kwargs,
     )
 
     return train_loader, val_loader, test_loader
@@ -278,12 +285,11 @@ def train_fsnet(
         optimizer, mode='max', factor=0.5, patience=10, verbose=True
     )
 
-    best_acc = 0.0
-    history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': []}
+    best_f1 = 0.0
+    history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': [], 'val_f1': []}
 
     for epoch in range(1, epochs + 1):
-        logger.info(f"\nEpoch {epoch}/{epochs}")
-        logger.info("-" * 40)
+        epoch_start = datetime.now()
 
         # Train
         train_metrics = train_one_epoch(
@@ -296,30 +302,41 @@ def train_fsnet(
         val_metrics = evaluate(model, val_loader, device, model.num_classes)
         history['val_loss'].append(val_metrics['loss'])
         history['val_acc'].append(val_metrics['accuracy'])
-
-        logger.info(f"Train Loss: {train_metrics['loss']:.4f}, Acc: {train_metrics['accuracy']:.4f}")
-        logger.info(f"Val Loss: {val_metrics['loss']:.4f}, Acc: {val_metrics['accuracy']:.4f}")
+        history['val_f1'].append(val_metrics['f1'])
 
         # Learning rate scheduling
-        scheduler.step(val_metrics['accuracy'])
+        scheduler.step(val_metrics['f1'])
 
         # Save best model
-        if val_metrics['accuracy'] > best_acc:
-            best_acc = val_metrics['accuracy']
+        is_best = val_metrics['f1'] > best_f1
+        if is_best:
+            best_f1 = val_metrics['f1']
             save_checkpoint(
                 model, optimizer, epoch, val_metrics,
                 os.path.join(save_dir, 'best_model.pt')
             )
-            logger.info(f"New best model saved with accuracy: {best_acc:.4f}")
+
+        epoch_time = (datetime.now() - epoch_start).total_seconds()
+        logger.info(
+            f"Epoch {epoch:3d}/{epochs} | "
+            f"Train Loss: {train_metrics['loss']:.4f} Acc: {train_metrics['accuracy']:.4f} | "
+            f"Val Acc: {val_metrics['accuracy']:.4f} F1: {val_metrics['f1']:.4f} | "
+            f"Time: {epoch_time:.1f}s {'*' if is_best else ''}"
+        )
+
+    # Load best model before returning
+    best_model_path = os.path.join(save_dir, 'best_model.pt')
+    if os.path.exists(best_model_path):
+        model, _, _ = load_checkpoint(model, best_model_path, optimizer=None, device=device)
 
     return model, history
 
 
 def print_evaluation_results(metrics: Dict, label_map: Dict, logger):
     """Print detailed evaluation results."""
-    logger.info("\n" + "=" * 80)
+    logger.info("\n" + "=" * 90)
     logger.info("Final Evaluation on Test Set")
-    logger.info("=" * 80)
+    logger.info("=" * 90)
 
     logger.info(f"\nOverall Results:")
     logger.info(f"  Accuracy:  {metrics['accuracy']:.4f}")
@@ -329,22 +346,24 @@ def print_evaluation_results(metrics: Dict, label_map: Dict, logger):
     logger.info(f"  TPR_AVE:   {metrics['tpr_avg']:.4f}")
     logger.info(f"  FPR_AVE:   {metrics['fpr_avg']:.4f}")
 
-    logger.info("\n" + "-" * 80)
+    logger.info("\n" + "-" * 90)
     logger.info("Per-Class Results:")
-    logger.info("-" * 80)
-    logger.info(f"{'Class':<24} {'Count':>6} {'Precision':>10} {'Recall':>10} {'F1':>10} {'TPR':>10} {'FPR':>10}")
-    logger.info("-" * 80)
+    logger.info("-" * 90)
+    logger.info(f"{'Class':<25} {'Count':>8} {'Precision':>10} {'Recall':>10} {'F1':>10} {'TPR':>10} {'FPR':>10}")
+    logger.info("-" * 90)
 
-    for i, (tpr, fpr, precision, recall, f1, count) in enumerate(zip(
-        metrics['per_class_tpr'],
-        metrics['per_class_fpr'],
+    for i, (count, precision, recall, f1, tpr, fpr) in enumerate(zip(
+        metrics['per_class_count'],
         metrics['per_class_precision'],
         metrics['per_class_recall'],
         metrics['per_class_f1'],
-        metrics['per_class_count']
+        metrics['per_class_tpr'],
+        metrics['per_class_fpr']
     )):
-        class_name = label_map.get(i, f"Class_{i}")[:24]
-        logger.info(f"{class_name:<24} {count:>6} {precision:>10.4f} {recall:>10.4f} {f1:>10.4f} {tpr:>10.4f} {fpr:>10.4f}")
+        class_name = label_map.get(i, f"Class_{i}")
+        if len(class_name) > 24:
+            class_name = class_name[:21] + "..."
+        logger.info(f"{class_name:<25} {count:>8} {precision:>10.4f} {recall:>10.4f} {f1:>10.4f} {tpr:>10.4f} {fpr:>10.4f}")
 
 
 # =============================================================================
@@ -355,6 +374,7 @@ def experiment_1_baseline(
     logger,
     epochs: int,
     batch_size: int,
+    num_workers: int,
     learning_rate: float,
     seed: int,
     device: torch.device,
@@ -362,8 +382,8 @@ def experiment_1_baseline(
     """
     实验1: 基准线 - 仅首页指纹
 
-    训练集: 数据集B (仅首页) 70%
-    验证集: 数据集B (仅首页) 15%
+    训练集: 数据集B (仅首页) 80%
+    验证集: 数据集B (仅首页) 10%
     测试集: 数据集B (子页面) + 数据集A (连续会话)
     """
     logger.info("=" * 70)
@@ -409,14 +429,14 @@ def experiment_1_baseline(
     train_loader, val_loader, test_loader = create_dataloaders(
         train_data, val_data, test_data,
         batch_size=batch_size,
-        num_workers=0,
+        num_workers=num_workers,
     )
 
     # Create model
     model = create_fsnet(num_classes)
 
     # Train model
-    save_dir = Path(OUTPUT_DIR) / 'experiment_1_baseline'
+    save_dir = Path(OUTPUT_DIR)
     save_dir.mkdir(parents=True, exist_ok=True)
 
     model, history = train_fsnet(
@@ -444,6 +464,7 @@ def experiment_2_proposed(
     logger,
     epochs: int,
     batch_size: int,
+    num_workers: int,
     learning_rate: float,
     seed: int,
     device: torch.device,
@@ -451,8 +472,8 @@ def experiment_2_proposed(
     """
     实验2: 提出的方法 - 全站指纹
 
-    训练集: 数据集B (首页 + 子页面) 70%
-    验证集: 数据集B (首页 + 子页面) 15%
+    训练集: 数据集B (首页 + 子页面) 80%
+    验证集: 数据集B (首页 + 子页面) 10%
     测试集: 数据集A (连续会话) 100%
     """
     logger.info("=" * 70)
@@ -502,14 +523,14 @@ def experiment_2_proposed(
     train_loader, val_loader, test_loader = create_dataloaders(
         train_data, val_data, test_data,
         batch_size=batch_size,
-        num_workers=0,
+        num_workers=num_workers,
     )
 
     # Create model
     model = create_fsnet(num_classes)
 
     # Train model
-    save_dir = Path(OUTPUT_DIR) / 'experiment_2_proposed'
+    save_dir = Path(OUTPUT_DIR)
     save_dir.mkdir(parents=True, exist_ok=True)
 
     model, history = train_fsnet(
@@ -537,6 +558,7 @@ def experiment_3_aggregate(
     logger,
     epochs: int,
     batch_size: int,
+    num_workers: int,
     learning_rate: float,
     seed: int,
     device: torch.device,
@@ -544,9 +566,9 @@ def experiment_3_aggregate(
     """
     实验3: 进阶对比 - 直接用连续会话训练
 
-    训练集: 数据集A 70%
-    验证集: 数据集A 15%
-    测试集: 数据集A 15%
+    训练集: 数据集A 80%
+    验证集: 数据集A 10%
+    测试集: 数据集A 10%
     """
     logger.info("=" * 70)
     logger.info("实验3: 进阶对比 - 连续会话训练")
@@ -577,14 +599,14 @@ def experiment_3_aggregate(
     train_loader, val_loader, test_loader = create_dataloaders(
         train_data, val_data, test_data,
         batch_size=batch_size,
-        num_workers=0,
+        num_workers=num_workers,
     )
 
     # Create model
     model = create_fsnet(num_classes)
 
     # Train model
-    save_dir = Path(OUTPUT_DIR) / 'experiment_3_aggregate'
+    save_dir = Path(OUTPUT_DIR)
     save_dir.mkdir(parents=True, exist_ok=True)
 
     model, history = train_fsnet(
@@ -613,6 +635,7 @@ def experiment_3_aggregate(
 # =============================================================================
 
 def main():
+    global OUTPUT_DIR
     parser = argparse.ArgumentParser(description='FS-Net Ablation Study')
 
     parser.add_argument('--experiment', type=int, required=True, choices=[1, 2, 3],
@@ -621,6 +644,8 @@ def main():
                         help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=2048,
                         help='Batch size')
+    parser.add_argument('--num_workers', type=int, default=4,
+                        help='Number of DataLoader workers')
     parser.add_argument('--lr', type=float, default=0.0005,
                         help='Learning rate')
     parser.add_argument('--seed', type=int, default=42,
@@ -637,15 +662,17 @@ def main():
     else:
         device = torch.device('cpu')
 
-    # Setup logging
-    experiment_name = f"experiment_{args.experiment}"
-    logger = setup_logging(experiment_name)
+    # Setup logging/output directory per experiment run
+    run_dir = Path(OUTPUT_DIR) / f"experiment{args.experiment}_{datetime.now().strftime('%Y%m%d')}"
+    OUTPUT_DIR = str(run_dir)
+    logger = setup_logging(OUTPUT_DIR)
 
     logger.info("FS-Net Ablation Study")
     logger.info(f"Experiment: {args.experiment}")
     logger.info(f"Device: {device}")
     logger.info(f"Epochs: {args.epochs}")
     logger.info(f"Batch size: {args.batch_size}")
+    logger.info(f"Num workers: {args.num_workers}")
     logger.info(f"Learning rate: {args.lr}")
 
     # Set random seed
@@ -655,15 +682,15 @@ def main():
     # Run experiment
     if args.experiment == 1:
         results = experiment_1_baseline(
-            logger, args.epochs, args.batch_size, args.lr, args.seed, device
+            logger, args.epochs, args.batch_size, args.num_workers, args.lr, args.seed, device
         )
     elif args.experiment == 2:
         results = experiment_2_proposed(
-            logger, args.epochs, args.batch_size, args.lr, args.seed, device
+            logger, args.epochs, args.batch_size, args.num_workers, args.lr, args.seed, device
         )
     elif args.experiment == 3:
         results = experiment_3_aggregate(
-            logger, args.epochs, args.batch_size, args.lr, args.seed, device
+            logger, args.epochs, args.batch_size, args.num_workers, args.lr, args.seed, device
         )
     else:
         raise ValueError(f"Unknown experiment: {args.experiment}")

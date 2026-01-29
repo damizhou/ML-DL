@@ -18,8 +18,8 @@ from datetime import datetime
 
 # 数据集列表（指向 _split 目录）
 DATASETS = [
-    "/root/FS-Net/output/novpn_top100",   # VPN unified
-    "/root/FS-Net/output/vpn_top100", # NoVPN unified
+    "/home/pcz/DL/ML_DL/YaTC/data/novpn_top100_split", # NoVPN unified
+    "/home/pcz/DL/ML_DL/YaTC/data/vpn_top100_split",   # VPN unified
 ]
 
 BASE_PATH = Path(__file__).parent.parent

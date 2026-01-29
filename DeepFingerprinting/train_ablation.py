@@ -34,6 +34,7 @@ import logging
 from pathlib import Path
 from typing import Dict, Tuple, Any, List
 from datetime import datetime
+from functools import partial
 
 import numpy as np
 import torch
@@ -48,22 +49,22 @@ from Model_NoDef_pytorch import DFNoDefNet
 # Configuration
 # =============================================================================
 
-DATA_DIR = "/home/pcz/DL/ML_DL/DeepFingerprinting/data/ablation_study"
-OUTPUT_DIR = "/home/pcz/DL/ML_DL/DeepFingerprinting/checkpoints/ablation_study"
+DATA_DIR = "/root/autodl-tmp/DeepFingerprinting/data/ablation_study"
+OUTPUT_DIR = f"/root/DeepFingerprinting/checkpoints/ablation_study"
 
 # 按批次划分比例 (避免数据泄露)
-TRAIN_RATIO = 0.70
-VAL_RATIO = 0.15
-TEST_RATIO = 0.15
+TRAIN_RATIO = 0.80
+VAL_RATIO = 0.10
+TEST_RATIO = 0.10
 
 
 # =============================================================================
 # Logging Setup
 # =============================================================================
 
-def setup_logging(experiment_name: str):
+def setup_logging(output_dir: str):
     """Setup logging configuration."""
-    log_dir = Path(OUTPUT_DIR) / experiment_name
+    log_dir = Path(output_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
 
     log_file = log_dir / 'training.log'
@@ -107,13 +108,23 @@ class DFDataset(Dataset):
 
     def __getitem__(self, idx):
         seq = self.sequences[idx]
-        seq_len = min(len(seq), self.max_len)
+        label = int(self.labels[idx])
+        return seq, label
 
-        # Pad/truncate + 转换
-        x = np.zeros(self.max_len, dtype=np.float32)
-        x[:seq_len] = seq[:seq_len].astype(np.float32)
 
-        return torch.from_numpy(x), torch.tensor(self.labels[idx], dtype=torch.long)
+def collate_pad_batch(batch, max_len: int):
+    """Pad/truncate sequences in a batch."""
+    batch_size = len(batch)
+    x = np.zeros((batch_size, max_len), dtype=np.float32)
+    y = np.empty(batch_size, dtype=np.int64)
+
+    for i, (seq, label) in enumerate(batch):
+        seq_len = min(len(seq), max_len)
+        if seq_len > 0:
+            x[i, :seq_len] = np.asarray(seq[:seq_len], dtype=np.float32)
+        y[i] = label
+
+    return torch.from_numpy(x), torch.from_numpy(y)
 
 
 # =============================================================================
@@ -241,8 +252,10 @@ def create_dataloaders(
     val_data: Tuple[List, np.ndarray],
     test_data: Tuple[List, np.ndarray],
     batch_size: int = 128,
-    num_workers: int = 0,
+    num_workers: int = 4,
     input_len: int = 5000,
+    prefetch_factor: int = 2,
+    persistent_workers: bool = True,
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """Create dataloaders from split data."""
 
@@ -254,29 +267,40 @@ def create_dataloaders(
     val_dataset = DFDataset(val_sequences, val_labels, input_len)
     test_dataset = DFDataset(test_sequences, test_labels, input_len)
 
+    use_workers = num_workers > 0
+    loader_kwargs = {
+        'num_workers': num_workers,
+        'pin_memory': True,
+        'persistent_workers': persistent_workers and use_workers,
+    }
+    if use_workers:
+        loader_kwargs['prefetch_factor'] = prefetch_factor
+
+    collate_fn = partial(collate_pad_batch, max_len=input_len)
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=num_workers,
-        pin_memory=True,
         drop_last=True,
+        collate_fn=collate_fn,
+        **loader_kwargs,
     )
 
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
-        pin_memory=True,
+        collate_fn=collate_fn,
+        **loader_kwargs,
     )
 
     test_loader = DataLoader(
         test_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
-        pin_memory=True,
+        collate_fn=collate_fn,
+        **loader_kwargs,
     )
 
     return train_loader, val_loader, test_loader
@@ -517,6 +541,7 @@ def experiment_1_baseline(
     logger,
     epochs: int,
     batch_size: int,
+    num_workers: int,
     learning_rate: float,
     seed: int,
     device: torch.device,
@@ -572,7 +597,7 @@ def experiment_1_baseline(
     train_loader, val_loader, test_loader = create_dataloaders(
         train_data, val_data, test_data,
         batch_size=batch_size,
-        num_workers=0,
+        num_workers=num_workers,
         input_len=input_len,
     )
 
@@ -580,7 +605,7 @@ def experiment_1_baseline(
     model = DFNoDefNet(num_classes=num_classes)
 
     # Train model
-    save_dir = Path(OUTPUT_DIR) / 'experiment_1_baseline'
+    save_dir = Path(OUTPUT_DIR)
     save_dir.mkdir(parents=True, exist_ok=True)
 
     model, history = train_df(
@@ -608,6 +633,7 @@ def experiment_2_proposed(
     logger,
     epochs: int,
     batch_size: int,
+    num_workers: int,
     learning_rate: float,
     seed: int,
     device: torch.device,
@@ -667,7 +693,7 @@ def experiment_2_proposed(
     train_loader, val_loader, test_loader = create_dataloaders(
         train_data, val_data, test_data,
         batch_size=batch_size,
-        num_workers=0,
+        num_workers=num_workers,
         input_len=input_len,
     )
 
@@ -675,7 +701,7 @@ def experiment_2_proposed(
     model = DFNoDefNet(num_classes=num_classes)
 
     # Train model
-    save_dir = Path(OUTPUT_DIR) / 'experiment_2_proposed'
+    save_dir = Path(OUTPUT_DIR)
     save_dir.mkdir(parents=True, exist_ok=True)
 
     model, history = train_df(
@@ -703,6 +729,7 @@ def experiment_3_aggregate(
     logger,
     epochs: int,
     batch_size: int,
+    num_workers: int,
     learning_rate: float,
     seed: int,
     device: torch.device,
@@ -744,7 +771,7 @@ def experiment_3_aggregate(
     train_loader, val_loader, test_loader = create_dataloaders(
         train_data, val_data, test_data,
         batch_size=batch_size,
-        num_workers=0,
+        num_workers=num_workers,
         input_len=input_len,
     )
 
@@ -752,7 +779,7 @@ def experiment_3_aggregate(
     model = DFNoDefNet(num_classes=num_classes)
 
     # Train model
-    save_dir = Path(OUTPUT_DIR) / 'experiment_3_aggregate'
+    save_dir = Path(OUTPUT_DIR)
     save_dir.mkdir(parents=True, exist_ok=True)
 
     model, history = train_df(
@@ -781,6 +808,7 @@ def experiment_3_aggregate(
 # =============================================================================
 
 def main():
+    global OUTPUT_DIR
     parser = argparse.ArgumentParser(description='DeepFingerprinting Ablation Study')
 
     parser.add_argument('--experiment', type=int, required=True, choices=[1, 2, 3],
@@ -789,6 +817,8 @@ def main():
                         help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=128,
                         help='Batch size')
+    parser.add_argument('--num_workers', type=int, default=4,
+                        help='Number of DataLoader workers')
     parser.add_argument('--lr', type=float, default=0.002,
                         help='Learning rate')
     parser.add_argument('--input_len', type=int, default=5000,
@@ -807,9 +837,10 @@ def main():
     else:
         device = torch.device('cpu')
 
-    # Setup logging
-    experiment_name = f"experiment_{args.experiment}"
-    logger = setup_logging(experiment_name)
+    # Setup logging/output directory per experiment run
+    run_dir = Path(OUTPUT_DIR) / f"experiment{args.experiment}_{datetime.now().strftime('%Y%m%d')}"
+    OUTPUT_DIR = str(run_dir)
+    logger = setup_logging(OUTPUT_DIR)
 
     logger.info("DeepFingerprinting Ablation Study")
     logger.info(f"Experiment: {args.experiment}")
@@ -826,15 +857,18 @@ def main():
     # Run experiment
     if args.experiment == 1:
         results = experiment_1_baseline(
-            logger, args.epochs, args.batch_size, args.lr, args.seed, device, args.input_len
+            logger, args.epochs, args.batch_size, args.num_workers, args.lr,
+            args.seed, device, args.input_len
         )
     elif args.experiment == 2:
         results = experiment_2_proposed(
-            logger, args.epochs, args.batch_size, args.lr, args.seed, device, args.input_len
+            logger, args.epochs, args.batch_size, args.num_workers, args.lr,
+            args.seed, device, args.input_len
         )
     elif args.experiment == 3:
         results = experiment_3_aggregate(
-            logger, args.epochs, args.batch_size, args.lr, args.seed, device, args.input_len
+            logger, args.epochs, args.batch_size, args.num_workers, args.lr,
+            args.seed, device, args.input_len
         )
     else:
         raise ValueError(f"Unknown experiment: {args.experiment}")

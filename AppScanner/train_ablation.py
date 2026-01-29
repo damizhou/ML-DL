@@ -33,6 +33,7 @@ import pickle
 import logging
 from pathlib import Path
 from typing import Dict, Tuple, Any
+from datetime import datetime
 
 import numpy as np
 import torch
@@ -52,18 +53,18 @@ DATA_DIR = "/home/pcz/DL/ML_DL/AppScanner/data/ablation_study"
 OUTPUT_DIR = "/home/pcz/DL/ML_DL/AppScanner/checkpoints/ablation_study"
 
 # 按批次划分比例 (避免数据泄露)
-TRAIN_RATIO = 0.70
-VAL_RATIO = 0.15
-TEST_RATIO = 0.15
+TRAIN_RATIO = 0.8
+VAL_RATIO = 0.1
+TEST_RATIO = 0.1
 
 
 # =============================================================================
 # Logging Setup
 # =============================================================================
 
-def setup_logging(experiment_name: str):
+def setup_logging(output_dir: str):
     """Setup logging configuration."""
-    log_dir = Path(OUTPUT_DIR) / experiment_name
+    log_dir = Path(output_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
 
     log_file = log_dir / 'training.log'
@@ -261,7 +262,7 @@ def experiment_1_baseline(
     )
 
     # Train model
-    save_dir = Path(OUTPUT_DIR) / 'experiment_1_baseline'
+    save_dir = Path(OUTPUT_DIR)
     save_dir.mkdir(parents=True, exist_ok=True)
 
     if model_type == 'nn':
@@ -362,7 +363,7 @@ def experiment_2_proposed(
     )
 
     # Train model
-    save_dir = Path(OUTPUT_DIR) / 'experiment_2_proposed'
+    save_dir = Path(OUTPUT_DIR)
     save_dir.mkdir(parents=True, exist_ok=True)
 
     if model_type == 'nn':
@@ -445,7 +446,7 @@ def experiment_3_aggregate(
     )
 
     # Train model
-    save_dir = Path(OUTPUT_DIR) / 'experiment_3_aggregate'
+    save_dir = Path(OUTPUT_DIR)
     save_dir.mkdir(parents=True, exist_ok=True)
 
     if model_type == 'nn':
@@ -485,6 +486,7 @@ def experiment_3_aggregate(
 # =============================================================================
 
 def main():
+    global OUTPUT_DIR
     parser = argparse.ArgumentParser(description='AppScanner Ablation Study')
 
     parser.add_argument('--experiment', type=int, required=True, choices=[1, 2, 3],
@@ -502,9 +504,10 @@ def main():
 
     args = parser.parse_args()
 
-    # Setup logging
-    experiment_name = f"experiment_{args.experiment}_{args.model}"
-    logger = setup_logging(experiment_name)
+    # Setup logging/output directory per experiment run
+    run_dir = Path(OUTPUT_DIR) / f"experiment{args.experiment}_{datetime.now().strftime('%Y%m%d')}"
+    OUTPUT_DIR = str(run_dir)
+    logger = setup_logging(OUTPUT_DIR)
 
     logger.info("AppScanner Ablation Study")
     logger.info(f"Experiment: {args.experiment}")
