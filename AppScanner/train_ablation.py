@@ -121,6 +121,18 @@ def load_dataset_a(data_path: str) -> Tuple[np.ndarray, np.ndarray, Dict]:
     return data['features'], data['labels'], data['label_map']
 
 
+def sanitize_features(features: np.ndarray, logger, name: str) -> np.ndarray:
+    """Replace NaN/Inf values and log counts."""
+    nan_count = np.isnan(features).sum()
+    inf_count = np.isinf(features).sum()
+    if nan_count > 0 or inf_count > 0:
+        logger.warning(
+            f"{name}: found {nan_count} NaN and {inf_count} Inf values, replacing with 0"
+        )
+        features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+    return features
+
+
 def align_labels(
     dataset_b_label_map: Dict,
     dataset_a_label_map: Dict
@@ -228,6 +240,10 @@ def experiment_1_baseline(
     homepage_features, homepage_labels, subpage_features, subpage_labels, label_map_b = \
         load_dataset_b(str(dataset_b_path))
     aggregate_features, aggregate_labels, label_map_a = load_dataset_a(str(dataset_a_path))
+
+    homepage_features = sanitize_features(homepage_features, logger, "homepage_features")
+    subpage_features = sanitize_features(subpage_features, logger, "subpage_features")
+    aggregate_features = sanitize_features(aggregate_features, logger, "aggregate_features")
 
     # Align labels
     unified_label_map, b_to_unified, a_to_unified = align_labels(label_map_b, label_map_a)
@@ -341,6 +357,10 @@ def experiment_2_proposed(
         load_dataset_b(str(dataset_b_path))
     aggregate_features, aggregate_labels, label_map_a = load_dataset_a(str(dataset_a_path))
 
+    homepage_features = sanitize_features(homepage_features, logger, "homepage_features")
+    subpage_features = sanitize_features(subpage_features, logger, "subpage_features")
+    aggregate_features = sanitize_features(aggregate_features, logger, "aggregate_features")
+
     # Align labels
     unified_label_map, b_to_unified, a_to_unified = align_labels(label_map_b, label_map_a)
 
@@ -453,6 +473,8 @@ def experiment_3_aggregate(
 
     logger.info("Loading dataset A...")
     aggregate_features, aggregate_labels, label_map_a = load_dataset_a(str(dataset_a_path))
+
+    aggregate_features = sanitize_features(aggregate_features, logger, "aggregate_features")
 
     num_classes = len(label_map_a)
     logger.info(f"Total classes: {num_classes}")

@@ -372,6 +372,8 @@ class AppScannerDataset(Dataset):
             std: Pre-computed std for normalization
         """
         self.features = features.astype(np.float32)
+        # 清洗 NaN/Inf 值（skew/kurtosis 在 std=0 时会产生 NaN）
+        self.features = np.nan_to_num(self.features, nan=0.0, posinf=0.0, neginf=0.0)
         self.labels = labels.astype(np.int64)
 
         if normalize:

@@ -282,7 +282,7 @@ def train_fsnet(
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.5, patience=10, verbose=True
+        optimizer, mode='max', factor=0.5, patience=10
     )
 
     best_f1 = 0.0
@@ -640,9 +640,9 @@ def main():
 
     parser.add_argument('--experiment', type=int, required=True, choices=[1, 2, 3],
                         help='Experiment number (1: baseline, 2: proposed, 3: aggregate)')
-    parser.add_argument('--epochs', type=int, default=200,
+    parser.add_argument('--epochs', type=int, default=100,
                         help='Number of training epochs')
-    parser.add_argument('--batch_size', type=int, default=2048,
+    parser.add_argument('--batch_size', type=int, default=128,
                         help='Batch size')
     parser.add_argument('--num_workers', type=int, default=4,
                         help='Number of DataLoader workers')
