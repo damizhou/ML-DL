@@ -117,7 +117,9 @@ YaTC/
 │   ├── config.py                 # 配置定义
 │   ├── data.py                   # 数据加载
 │   ├── engine.py                 # 训练/评估循环
-│   ├── train.py                  # 训练入口
+│   ├── pretrain.py               # 预训练脚本
+│   ├── finetune.py               # 微调脚本
+│   ├── finetune_ablation.py      # 消融实验微调
 │   ├── pcap_to_mfr.py            # PCAP → MFR 转换
 │   └── tests.py                  # 单元测试
 │
@@ -247,3 +249,68 @@ decoder_depth = 2
 3. **掩码比例**: 90% 掩码比例是论文推荐值，对流量数据效果最好
 4. **权重加载**: 微调时仅加载 Encoder 权重，Decoder 权重会被丢弃
 5. **学习率调度**: 预训练和微调都使用 warmup + cosine decay 策略
+
+## 消融实验
+
+消融实验用于验证"采集子页面是必要的"以及"全站指纹采集策略的有效性"。
+
+### 设计原则
+
+- **控制变量**: 三个实验共享同一个预训练模型（使用外部数据集预训练）
+- **唯一变量**: 微调数据的来源不同
+- **避免泄露**: 预训练数据与微调/测试数据完全独立
+
+### 实验设计
+
+| 实验 | 训练数据 | 测试数据 | 目的 |
+|------|---------|---------|------|
+| **实验1** (Baseline) | 数据集B (仅首页) 80% | 子页面 + 连续会话 | 证明仅首页指纹无法泛化 |
+| **实验2** (Ours) | 数据集B (首页+子页面) 80% | 数据集A (连续会话) | 证明全站指纹的跨场景能力 |
+| **实验3** (进阶) | 数据集A (连续会话) 80% | 数据集A 10% | 对比细粒度采集 vs 直接训练 |
+
+### 数据集定义
+
+- **数据集A (Aggregate)**: 连续访问多个URL → 1个pcap，代表真实用户浏览会话
+- **数据集B (Single)**: 每个URL独立访问 → 多个pcap，包含首页和子页面
+
+### 数据格式
+
+```
+ablation_study/
+├── dataset_b_single.npz    # 单页面数据
+│   ├── homepage_images: (N1, 40, 40)
+│   ├── homepage_labels: (N1,)
+│   ├── subpage_images: (N2, 40, 40)
+│   ├── subpage_labels: (N2,)
+│   └── label_map: {"id2label": {...}, "label2id": {...}}
+│
+└── dataset_a_batch.npz     # 连续会话数据
+    ├── images: (N, 40, 40)
+    ├── labels: (N,)
+    └── label_map: {"id2label": {...}, "label2id": {...}}
+```
+
+### 使用方法
+
+```bash
+cd refactor
+
+# Step 1: 使用外部数据集预训练（只需一次）
+python pretrain.py  # 生成 ../checkpoints/pretrained.pth
+
+# Step 2: 三个实验共享同一个预训练模型
+python finetune_ablation.py --experiment 1 --pretrained ../checkpoints/pretrained.pth
+python finetune_ablation.py --experiment 2 --pretrained ../checkpoints/pretrained.pth
+python finetune_ablation.py --experiment 3 --pretrained ../checkpoints/pretrained.pth
+
+# 不使用预训练，从头训练
+python finetune_ablation.py --experiment 1
+```
+
+### 预期结果
+
+| 实验 | 预期表现 | 结论 |
+|------|---------|------|
+| 实验1 | 测试集准确率低 | 首页指纹无法泛化到全站流量 |
+| 实验2 | 测试集准确率高 | 覆盖子页面的采集是必要的 |
+| 实验3 | 与实验2对比 | 验证细粒度采集策略的稳健性 |
