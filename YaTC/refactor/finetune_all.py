@@ -18,8 +18,7 @@ from datetime import datetime
 
 # 数据集列表（指向 _split 目录）
 DATASETS = [
-    "/home/pcz/DL/ML_DL/YaTC/data/novpn_top100_split", # NoVPN unified
-    "/home/pcz/DL/ML_DL/YaTC/data/vpn_top100_split",   # VPN unified
+    "/root/autodl-tmp/YaTc/data/novpn_top1000_split", # NoVPN unified
 ]
 
 BASE_PATH = Path(__file__).parent.parent
@@ -39,10 +38,12 @@ def main():
 
     for i, rel_path in enumerate(DATASETS):
         data_path = BASE_PATH / rel_path
+        dataset_start = datetime.now()
 
         print(f"\n{'#' * 60}")
         print(f"# [{i+1}/{len(DATASETS)}] {data_path.name}")
         print(f"# Path: {data_path}")
+        print(f"# Start: {dataset_start.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'#' * 60}\n")
 
         # 检查是否为 split 目录结构
@@ -73,6 +74,13 @@ def main():
             print(f"[ERROR] {data_path.name} 失败: {e}")
             import traceback
             traceback.print_exc()
+
+        # 打印单个数据集用时
+        dataset_end = datetime.now()
+        dataset_elapsed = dataset_end - dataset_start
+        ds_hours, ds_remainder = divmod(int(dataset_elapsed.total_seconds()), 3600)
+        ds_mins, ds_secs = divmod(ds_remainder, 60)
+        print(f"\n[{data_path.name}] 完成，用时: {ds_hours:02d}:{ds_mins:02d}:{ds_secs:02d}")
 
     overall_end = datetime.now()
     elapsed = overall_end - overall_start
