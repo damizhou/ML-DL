@@ -77,7 +77,7 @@ from engine import (
 
 DATA_DIR = "/root/autodl-tmp/YaTC/data/ablation_study"
 OUTPUT_DIR = "/root/YaTC/checkpoints/ablation_study"
-
+PRETRAINED_PATH = Path(__file__).parent.parent / "checkpoints" / "pretrained.pth"
 # 按批次划分比例 (避免数据泄露)
 TRAIN_RATIO = 0.8
 VAL_RATIO = 0.1
@@ -102,6 +102,7 @@ def setup_logging(output_dir: str) -> logging.Logger:
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s [%(levelname)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
         handlers=[
             logging.FileHandler(log_file, encoding='utf-8'),
             logging.StreamHandler()
@@ -155,7 +156,7 @@ def load_dataset_b(data_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, 
     """
     Load Dataset B (single page) with homepage and subpage separation.
 
-    Expected NPZ structure:
+    Expected PKL structure:
     {
         "homepage_images": (N1, 40, 40),
         "homepage_labels": (N1,),
@@ -167,19 +168,16 @@ def load_dataset_b(data_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, 
     Returns:
         homepage_images, homepage_labels, subpage_images, subpage_labels, label_map
     """
-    with np.load(data_path, allow_pickle=True) as data:
-        homepage_images = data['homepage_images']
-        homepage_labels = data['homepage_labels']
-        subpage_images = data['subpage_images']
-        subpage_labels = data['subpage_labels']
-        label_map = data['label_map'].item()
+    import pickle
+    with open(data_path, 'rb') as f:
+        data = pickle.load(f)
 
     return (
-        homepage_images,
-        homepage_labels,
-        subpage_images,
-        subpage_labels,
-        label_map
+        data['homepage_images'],
+        data['homepage_labels'],
+        data['subpage_images'],
+        data['subpage_labels'],
+        data['label_map']
     )
 
 
@@ -187,7 +185,7 @@ def load_dataset_a(data_path: str) -> Tuple[np.ndarray, np.ndarray, Dict]:
     """
     Load Dataset A (aggregate session) data.
 
-    Expected NPZ structure:
+    Expected PKL structure:
     {
         "images": (N, 40, 40),
         "labels": (N,),
@@ -197,12 +195,11 @@ def load_dataset_a(data_path: str) -> Tuple[np.ndarray, np.ndarray, Dict]:
     Returns:
         images, labels, label_map
     """
-    with np.load(data_path, allow_pickle=True) as data:
-        images = data['images']
-        labels = data['labels']
-        label_map = data['label_map'].item()
+    import pickle
+    with open(data_path, 'rb') as f:
+        data = pickle.load(f)
 
-    return images, labels, label_map
+    return data['images'], data['labels'], data['label_map']
 
 
 def align_labels(
@@ -390,6 +387,8 @@ def train_and_evaluate(
     logger.info("-" * 60)
 
     for epoch in range(config['epochs']):
+        epoch_start_time = datetime.now()
+
         # Train
         train_metrics = train_one_epoch(
             model=model,
@@ -432,11 +431,18 @@ def train_and_evaluate(
             )
             marker = " *"
 
+        # Calculate epoch time
+        epoch_end_time = datetime.now()
+        epoch_elapsed = epoch_end_time - epoch_start_time
+        epoch_seconds = int(epoch_elapsed.total_seconds())
+        epoch_mins, epoch_secs = divmod(epoch_seconds, 60)
+
         logger.info(
             f"Epoch {epoch+1:3d} | Train Loss: {train_metrics['loss']:.4f} | "
             f"Train Acc: {train_metrics['acc']:.4f} | "
             f"Val Acc: {val_metrics['accuracy']:.4f} | "
-            f"Val F1: {val_metrics['f1']:.4f}{marker}"
+            f"Val F1: {val_metrics['f1']:.4f} | "
+            f"Time: {epoch_mins:02d}:{epoch_secs:02d}{marker}"
         )
 
     # Final test evaluation
@@ -516,8 +522,8 @@ def experiment_1_baseline(
     logger.info("=" * 70)
 
     # Load datasets
-    dataset_b_path = Path(DATA_DIR) / 'dataset_b_single.npz'
-    dataset_a_path = Path(DATA_DIR) / 'dataset_a_batch.npz'
+    dataset_b_path = Path(DATA_DIR) / 'dataset_b_single.pkl'
+    dataset_a_path = Path(DATA_DIR) / 'dataset_a_batch.pkl'
 
     logger.info("Loading datasets...")
     homepage_images, homepage_labels, subpage_images, subpage_labels, label_map_b = \
@@ -602,8 +608,8 @@ def experiment_2_proposed(
     logger.info("=" * 70)
 
     # Load datasets
-    dataset_b_path = Path(DATA_DIR) / 'dataset_b_single.npz'
-    dataset_a_path = Path(DATA_DIR) / 'dataset_a_batch.npz'
+    dataset_b_path = Path(DATA_DIR) / 'dataset_b_single.pkl'
+    dataset_a_path = Path(DATA_DIR) / 'dataset_a_batch.pkl'
 
     logger.info("Loading datasets...")
     homepage_images, homepage_labels, subpage_images, subpage_labels, label_map_b = \
@@ -690,7 +696,7 @@ def experiment_3_aggregate(
     logger.info("=" * 70)
 
     # Load dataset A
-    dataset_a_path = Path(DATA_DIR) / 'dataset_a_batch.npz'
+    dataset_a_path = Path(DATA_DIR) / 'dataset_a_batch.pkl'
 
     logger.info("Loading dataset A...")
     aggregate_images, aggregate_labels, label_map_a = load_dataset_a(str(dataset_a_path))
@@ -763,7 +769,7 @@ def main():
 
     parser.add_argument('--experiment', type=int, required=True, choices=[1, 2, 3],
                         help='Experiment number (1: baseline, 2: proposed, 3: aggregate)')
-    parser.add_argument('--pretrained', type=str, default=None,
+    parser.add_argument('--pretrained', type=str, default=PRETRAINED_PATH,
                         help='Path to pre-trained model weights')
     parser.add_argument('--epochs', type=int, default=100,
                         help='Number of training epochs')
