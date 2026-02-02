@@ -44,3 +44,4 @@ DeepFingerprinting/output/
 消融实验.md
 DataDealer/check_appscanner_ablation.py
 DataDealer/check_nan.py
+*/output/
