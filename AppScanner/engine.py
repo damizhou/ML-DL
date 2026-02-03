@@ -339,6 +339,7 @@ def train(
             f"Loss: {train_metrics.loss:.4f} | "
             f"Train Acc: {train_metrics.accuracy:.4f} | "
             f"Val Acc: {val_metrics.accuracy:.4f} | "
+            f"Val F1: {val_metrics.f1:.4f} | "
             f"Conf Acc: {val_metrics.confidence_accuracy:.4f} "
             f"({val_metrics.confidence_ratio:.1%}) | "
             f"LR: {train_metrics.learning_rate:.6f} | "

@@ -10,11 +10,12 @@ SSH_BIN = "ssh"
 # ssh -p 16916 root@connect.bjb2.seetacloud.com
 # ssh -p 35983 root@connect.bjb2.seetacloud.com
 # ssh -p 33846 root@connect.bjb1.seetacloud.com
-PORT = 33846
-PATTERN = "/home/pcz/DL/ML_DL/YaTC/data/novpn_top50_split/"
+# ssh -p 13240 root@connect.bjb2.seetacloud.com
+PORT = 13240
+PATTERN = "/home/pcz/DL/ML_DL/YaTC/data/vpn_top10_split/"
 USER = "root"
-HOST = "connect.bjb1.seetacloud.com"
-REMOTE_DIR = "/root/autodl-tmp/YaTc/data/novpn_top50_split"
+HOST = "connect.bjb2.seetacloud.com"
+REMOTE_DIR = "/root/autodl-tmp/YaTC/data/vpn_top10_split"
 
 
 def main() -> int:
