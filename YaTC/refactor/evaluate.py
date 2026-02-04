@@ -63,10 +63,18 @@ def log(message: str = ""):
 # =============================================================================
 
 # 模型路径
-MODEL_PATH = Path("/home/pcz/DL/ML_DL/YaTC/checkpoints/yatc_best.pth")
+# MODEL_PATH = Path("/home/pcz/DL/ML_DL/YaTC/checkpoints/yatc_best.pth")
+# MODEL_PATH = Path(__file__).parent.parent / "output" / "novpn_unified_output_split" / "yatc_best.pth"
+#
+# # 数据路径
+# DATA_PATH = Path(__file__).parent.parent / "data" / "novpn_unified_output_split"
 
-# 数据路径
-DATA_PATH = Path(__file__).parent.parent / "data" / "vpn_unified_output_split"
+
+# MODEL_PATH = Path(__file__).parent.parent / "output" / "vpn_top1000" / "yatc_best.pth"
+# DATA_PATH = Path(__file__).parent.parent / "data" / "vpn_top1000_split"
+
+MODEL_PATH = Path(__file__).parent.parent / "output" / "novpn_top500" / "yatc_best.pth"
+DATA_PATH = Path(__file__).parent.parent / "data" / "novpn_top500_split"
 
 # 是否使用已划分的目录结构 (train/val/test 子目录)
 USE_SPLIT_DIR = True

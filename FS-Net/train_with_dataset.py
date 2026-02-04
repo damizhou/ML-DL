@@ -75,9 +75,9 @@ class TrainArgs:
     mode: str = 'train'
 
     # Data paths
-    data_path: str = ''
+    # data_path: str = ''
     # data_path: str = './data/iscxvpn/iscxvpn_fsnet.pkl'
-    # data_path: str = './data/cic_iot_2022/cic_iot_2022_fsnet.pkl'  # Pre-extracted features
+    data_path: str = './data/cic_iot_2022/cic_iot_2022_fsnet.pkl'  # Pre-extracted features
     # data_path: str = './data/cross_platform/cross_platform_fsnet.pkl'  # Pre-extracted features
     # data_path: str = './data/iscxtor/iscxtor_fsnet.pkl'  # Pre-extracted features
     # data_path: str = './data/ustc/ustc_fsnet.pkl'  # Pre-extracted features

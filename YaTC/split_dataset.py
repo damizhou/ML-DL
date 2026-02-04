@@ -59,8 +59,8 @@ from tensorflow.python.keras.combinations import times
 # INPUT_DIR = "data/iscxvpn"
 # INPUT_DIR = "data/cross_platform"
 # INPUT_DIR = "data/ustc"
-# INPUT_DIR = "data/novpn_unified_output"
-INPUT_DIR = "data/vpn_unified_output"
+INPUT_DIR = "data/novpn_unified_output"
+# INPUT_DIR = "data/vpn_unified_output"
 # INPUT_DIR = "data/cic_iot_2022"
 
 # 输出目录（None 表示使用 <input>_split）
