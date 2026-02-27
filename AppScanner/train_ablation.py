@@ -49,8 +49,8 @@ from config import AppScannerConfig
 # Configuration
 # =============================================================================
 
-DATA_DIR = "/root/autodl-tmp/AppScanner/data/ablation_study"
-OUTPUT_DIR = "/root/AppScanner/checkpoints/ablation_study"
+DATA_DIR = "data/ablation_study"
+OUTPUT_DIR = "checkpoints/ablation_study"
 
 # 按批次划分比例 (避免数据泄露)
 TRAIN_RATIO = 0.8

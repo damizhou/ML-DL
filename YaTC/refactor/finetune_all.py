@@ -19,9 +19,9 @@ from datetime import datetime
 # 数据集列表（指向 _split 目录）
 DATASETS = [
     # "/home/pcz/DL/ML_DL/YaTC/data/vpn_top50_split",
-    # "/root/autodl-tmp/YaTc/data/novpn_top50_split",
+    "data/novpn_top50_split",
     # "/home/pcz/DL/ML_DL/YaTC/data/vpn_top10_split",
-    "/root/autodl-tmp/YaTc/data/novpn_top10_split",
+    # "/root/autodl-tmp/YaTc/data/novpn_top10_split",
 ]
 
 BASE_PATH = Path(__file__).parent.parent

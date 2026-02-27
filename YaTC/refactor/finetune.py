@@ -116,6 +116,9 @@ PREFETCH_FACTOR = 2
 SAVE_FREQ_EPOCHS = 10
 PRINT_FREQ = 100
 
+# 恢复训练（设为 None 表示从头训练）
+RESUME_PATH = "/home/pcz/DL/ML_DL/YaTC/output/novpn_top50/finetune_epoch0090.pth"
+
 # 数据格式
 USE_NPZ = True  # True: NPZ 格式, False: PNG 图像
 
@@ -288,13 +291,23 @@ def main():
 
     # Training loop
     best_val_acc = 0.0
+    start_epoch = 0
+
+    # Resume from checkpoint
+    if RESUME_PATH and Path(RESUME_PATH).exists():
+        checkpoint = torch.load(RESUME_PATH, map_location=device)
+        model.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        start_epoch = checkpoint['epoch'] + 1
+        log(f"Resumed from checkpoint: {RESUME_PATH}")
+        log(f"Resuming from epoch {start_epoch}")
     best_model_path = OUTPUT_DIR / "yatc_best.pth"
     eval_loader = val_loader if val_loader is not None else test_loader
 
     log(f"\nStarting training for {EPOCHS} epochs...")
     log("-" * 60)
 
-    for epoch in range(EPOCHS):
+    for epoch in range(start_epoch, EPOCHS):
         # Train
         train_metrics = train_one_epoch(
             model=model,
