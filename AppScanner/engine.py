@@ -448,6 +448,9 @@ def train_random_forest(
     y_test: np.ndarray,
     n_estimators: int = 100,
     prediction_threshold: float = 0.9,
+    X_val: np.ndarray = None,
+    y_val: np.ndarray = None,
+    label_map: Dict = None,
 ) -> Dict[str, Any]:
     """
     Train and evaluate Random Forest classifier (original paper approach).
@@ -459,6 +462,9 @@ def train_random_forest(
         y_test: Test labels
         n_estimators: Number of trees
         prediction_threshold: Confidence threshold
+        X_val: Validation features (optional)
+        y_val: Validation labels (optional)
+        label_map: Label mapping for classification report (optional)
 
     Returns:
         Dictionary with model and metrics
@@ -469,31 +475,59 @@ def train_random_forest(
     rf = AppScannerRF(n_estimators=n_estimators)
     rf.fit(X_train, y_train)
 
-    # Predictions
+    # --- Train metrics ---
+    train_preds = rf.model.predict(X_train)
+    train_acc = accuracy_score(y_train, train_preds)
+    train_f1 = f1_score(y_train, train_preds, average='weighted', zero_division=0)
+    log(f"Train Accuracy: {train_acc:.4f}")
+    log(f"Train F1 (weighted): {train_f1:.4f}")
+
+    # --- Val metrics ---
+    if X_val is not None and y_val is not None:
+        val_preds = rf.model.predict(X_val)
+        val_acc = accuracy_score(y_val, val_preds)
+        val_f1 = f1_score(y_val, val_preds, average='weighted', zero_division=0)
+        log(f"Val Accuracy: {val_acc:.4f}")
+        log(f"Val F1 (weighted): {val_f1:.4f}")
+    else:
+        val_acc = None
+        val_f1 = None
+
+    # --- Test metrics ---
     predictions, confidences, confident_mask = rf.predict_with_threshold(
         X_test, threshold=prediction_threshold
     )
-
-    # Metrics
-    accuracy = accuracy_score(y_test, predictions)
+    test_acc = accuracy_score(y_test, predictions)
+    test_f1 = f1_score(y_test, predictions, average='weighted', zero_division=0)
     confidence_accuracy = accuracy_score(
         y_test[confident_mask],
         predictions[confident_mask]
     ) if confident_mask.sum() > 0 else 0.0
     confidence_ratio = confident_mask.sum() / len(confident_mask)
 
-    log(f"Random Forest Results:")
-    log(f"  Overall Accuracy: {accuracy:.4f}")
-    log(f"  Confidence Accuracy: {confidence_accuracy:.4f} ({confidence_ratio:.1%})")
+    log(f"Test Accuracy: {test_acc:.4f}")
+    log(f"Test F1 (weighted): {test_f1:.4f}")
+    log(f"Confidence Accuracy: {confidence_accuracy:.4f} ({confidence_ratio:.1%})")
+
+    # Classification report
+    if label_map is not None:
+        target_names = [label_map[i] for i in sorted(label_map.keys())]
+        report = classification_report(y_test, predictions, target_names=target_names, zero_division=0)
+        log(f"\nClassification Report:\n{report}")
 
     # Feature importance
     importance = rf.feature_importance()
     top_features = np.argsort(importance)[::-1][:10]
-    log(f"  Top 10 features: {top_features}")
+    log(f"Top 10 features: {top_features}")
 
     return {
         'model': rf,
-        'accuracy': accuracy,
+        'train_accuracy': train_acc,
+        'train_f1': train_f1,
+        'val_accuracy': val_acc,
+        'val_f1': val_f1,
+        'test_accuracy': test_acc,
+        'test_f1': test_f1,
         'confidence_accuracy': confidence_accuracy,
         'confidence_ratio': confidence_ratio,
         'feature_importance': importance,

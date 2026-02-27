@@ -730,6 +730,7 @@ def create_dataloaders_from_split(
     test_data: Tuple[np.ndarray, np.ndarray],
     batch_size: int = 128,
     num_workers: int = 4,
+    independent_test_norm: bool = False,
 ) -> Tuple[DataLoader, DataLoader, DataLoader, Tuple[np.ndarray, np.ndarray]]:
     """
     Create dataloaders from pre-split data.
@@ -740,6 +741,8 @@ def create_dataloaders_from_split(
         test_data: (features, labels) for testing
         batch_size: Batch size
         num_workers: Number of data loading workers
+        independent_test_norm: If True, test set uses its own mean/std for normalization.
+            Use this when train and test come from different distributions (cross-domain).
 
     Returns:
         train_loader, val_loader, test_loader, (mean, std)
@@ -756,7 +759,7 @@ def create_dataloaders_from_split(
     )
     mean, std = train_dataset.get_normalization_params()
 
-    # Create val/test datasets with same normalization
+    # Create val dataset with training normalization (same domain)
     val_dataset = AppScannerDataset(
         val_features,
         val_labels,
@@ -765,13 +768,21 @@ def create_dataloaders_from_split(
         std=std,
     )
 
-    test_dataset = AppScannerDataset(
-        test_features,
-        test_labels,
-        normalize=True,
-        mean=mean,
-        std=std,
-    )
+    # Create test dataset: use its own normalization if cross-domain
+    if independent_test_norm:
+        test_dataset = AppScannerDataset(
+            test_features,
+            test_labels,
+            normalize=True,
+        )
+    else:
+        test_dataset = AppScannerDataset(
+            test_features,
+            test_labels,
+            normalize=True,
+            mean=mean,
+            std=std,
+        )
 
     # Create loaders
     train_loader = DataLoader(

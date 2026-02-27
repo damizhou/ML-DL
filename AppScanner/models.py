@@ -228,6 +228,7 @@ class AppScannerRF:
         max_depth: Optional[int] = None,
         min_samples_split: int = 2,
         random_state: int = 42,
+        n_jobs: int = 16,
     ):
         if not SKLEARN_AVAILABLE:
             raise ImportError("scikit-learn is required for Random Forest classifier")
@@ -237,7 +238,7 @@ class AppScannerRF:
             max_depth=max_depth,
             min_samples_split=min_samples_split,
             random_state=random_state,
-            n_jobs=-1,  # Use all CPU cores
+            n_jobs=n_jobs,
         )
         self.is_fitted = False
 

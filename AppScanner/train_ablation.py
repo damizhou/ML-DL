@@ -274,12 +274,14 @@ def experiment_1_baseline(
     # Update config
     config.num_classes = num_classes
 
-    # Create dataloaders
+    # Create dataloaders (cross-domain: train=homepage, test=subpage+aggregate)
     train_loader, val_loader, test_loader, norm_params = create_dataloaders_from_split(
         train_data, val_data, test_data,
         batch_size=config.batch_size,
         num_workers=config.num_workers,
+        independent_test_norm=True,
     )
+
 
     # Train model
     save_dir = Path(OUTPUT_DIR)
@@ -317,13 +319,17 @@ def experiment_1_baseline(
 
     elif model_type == 'rf':
         train_features, train_labels = train_data
+        val_features, val_labels = val_data
         test_features, test_labels = test_data
 
         results = train_random_forest(
             train_features, train_labels,
             test_features, test_labels,
             n_estimators=config.n_estimators,
-            prediction_threshold=config.prediction_threshold
+            prediction_threshold=config.prediction_threshold,
+            X_val=val_features,
+            y_val=val_labels,
+            label_map=unified_label_map,
         )
 
         return results
@@ -394,12 +400,14 @@ def experiment_2_proposed(
     # Update config
     config.num_classes = num_classes
 
-    # Create dataloaders
+    # Create dataloaders (cross-domain: train=single pages, test=aggregate sessions)
     train_loader, val_loader, test_loader, norm_params = create_dataloaders_from_split(
         train_data, val_data, test_data,
         batch_size=config.batch_size,
         num_workers=config.num_workers,
+        independent_test_norm=True,
     )
+
 
     # Train model
     save_dir = Path(OUTPUT_DIR)
@@ -437,13 +445,17 @@ def experiment_2_proposed(
 
     elif model_type == 'rf':
         train_features, train_labels = train_data
+        val_features, val_labels = val_data
         test_features, test_labels = test_data
 
         results = train_random_forest(
             train_features, train_labels,
             test_features, test_labels,
             n_estimators=config.n_estimators,
-            prediction_threshold=config.prediction_threshold
+            prediction_threshold=config.prediction_threshold,
+            X_val=val_features,
+            y_val=val_labels,
+            label_map=unified_label_map,
         )
 
         return results
@@ -494,12 +506,13 @@ def experiment_3_aggregate(
     # Update config
     config.num_classes = num_classes
 
-    # Create dataloaders
+    # Create dataloaders (same domain)
     train_loader, val_loader, test_loader, norm_params = create_dataloaders_from_split(
         train_data, val_data, test_data,
         batch_size=config.batch_size,
         num_workers=config.num_workers,
     )
+
 
     # Train model
     save_dir = Path(OUTPUT_DIR)
@@ -537,13 +550,17 @@ def experiment_3_aggregate(
 
     elif model_type == 'rf':
         train_features, train_labels = train_data
+        val_features, val_labels = val_data
         test_features, test_labels = test_data
 
         results = train_random_forest(
             train_features, train_labels,
             test_features, test_labels,
             n_estimators=config.n_estimators,
-            prediction_threshold=config.prediction_threshold
+            prediction_threshold=config.prediction_threshold,
+            X_val=val_features,
+            y_val=val_labels,
+            label_map=label_map_a,
         )
 
         return results

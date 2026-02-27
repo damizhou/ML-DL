@@ -87,25 +87,10 @@ class TrainArgs:
     # Data paths
     data_dir: str = './data'                    # Directory with PCAP files
     csv_path: Optional[str] = None              # CSV file with features
-    # features_path: str = './data/iscxvpn/iscxvpn_appscanner.pkl'  # Pre-extracted features
-    # features_path: str = './data/cic_iot_2022/cic_iot_2022_appscanner.pkl'  # Pre-extracted features
-    # features_path: str = './data/cross_platform/cross_platform_appscanner.pkl'  # Pre-extracted features
-    # features_path: str = './data/iscxtor/iscxtor_appscanner.pkl'  # Pre-extracted features
-    # features_path: str = './data/ustc/ustc_appscanner.pkl'  # Pre-extracted features
-    # features_path: str = './data/novpn/novpn_appscanner.pkl'  # Pre-extracted features
-    # features_path: str = '/root/autodl-tmp/AppScanner/data/novpn_top10/novpn_top10_appscanner.pkl'  # Pre-extracted features
-    # features_path: str = '/root/autodl-tmp/AppScanner/data/vpn_top10/vpn_top10_appscanner.pkl'  # Pre-extracted features
-    # features_path: str = '/root/autodl-tmp/AppScanner/data/novpn_top50/novpn_top50_appscanner.pkl'  # Pre-extracted features
-    # features_path: str = '/root/autodl-tmp/AppScanner/data/vpn_top50/vpn_top50_appscanner.pkl'  # Pre-extracted features
-    features_path: str = '/root/autodl-tmp/AppScanner/data/novpn_top100/novpn_top100_appscanner.pkl'  # Pre-extracted features
-    # features_path: str = '/root/autodl-tmp/AppScanner/data/vpn_top100/vpn_top100_appscanner.pkl'  # Pre-extracted features
-    # features_path: str = '/root/autodl-tmp/AppScanner/data/novpn_top500/novpn_top500_appscanner.pkl'  # Pre-extracted features
-    # features_path: str = '/root/autodl-tmp/AppScanner/data/vpn_top500/vpn_top500_appscanner.pkl'  # Pre-extracted features
-    # features_path: str = '/root/autodl-tmp/AppScanner/data/novpn_top1000/novpn_top1000_appscanner.pkl'  # Pre-extracted features
-    # features_path: str = '/root/autodl-tmp/AppScanner/data/vpn_top1000/vpn_top1000_appscanner.pkl'  # Pre-extracted features
-
+    features_paths: List[str] = None            # List of pre-extracted feature files
+    features_path: Optional[str] = None         # Current dataset (set automatically)
     # Model configuration
-    model_type: str = 'nn'                      # 'nn', 'deep', or 'rf'
+    model_type: str = 'rf'                      # 'nn', 'deep', or 'rf'
     num_classes: Optional[int] = None           # Auto-detect from data
     input_dim: int = 54                         # 54 statistical features
     hidden_dims: List[int] = None               # Default: [256, 128, 64]
@@ -140,24 +125,33 @@ class TrainArgs:
     def __post_init__(self):
         if self.hidden_dims is None:
             self.hidden_dims = [256, 128, 64]
+        if self.features_paths is None:
+            self.features_paths = [
+                '/home/pcz/code/DL/AppScanner/data/novpn_top500/novpn_top500_appscanner.pkl',
+                '/home/pcz/code/DL/AppScanner/data/vpn_top500/vpn_top500_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/novpn_top1000/novpn_top1000_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/vpn_top1000/vpn_top1000_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/vpn/vpn_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/novpn/novpn_appscanner.pkl',
+            ]
 
 
 def get_args() -> TrainArgs:
-    """Get training arguments with optional command line override for features_path."""
+    """Get training arguments with optional command line override."""
     import argparse
 
     parser = argparse.ArgumentParser(description='AppScanner Training Script')
-    parser.add_argument('--data_path', type=str, default=None,
-                        help='Path to pickle file (overrides default)')
+    parser.add_argument('--data_path', type=str, nargs='+', default=None,
+                        help='Path(s) to pickle file(s) (overrides default list)')
 
     args = parser.parse_args()
 
     # Create TrainArgs with defaults
     train_args = TrainArgs()
 
-    # Override features_path if provided
+    # Override features_paths if provided via command line
     if args.data_path is not None:
-        train_args.features_path = args.data_path
+        train_args.features_paths = args.data_path
 
     return train_args
 
@@ -244,78 +238,115 @@ def mode_train(args, config):
         class_name = label_map.get(label_id, f"Unknown({label_id})")
         log(f"  {class_name}: {count} ({count/len(labels)*100:.1f}%)")
 
-    # Create dataloaders with 8:1:1 split (train:val:test)
-    train_loader, val_loader, test_loader, norm_params = create_dataloaders(
-        features, labels,
-        batch_size=config.batch_size,
-        train_ratio=config.train_ratio,
-        val_ratio=config.val_ratio,
-        test_ratio=config.test_ratio,
-        seed=config.seed,
-        num_workers=config.num_workers,
-    )
-    input_dim = features.shape[1]
+    if args.model_type == 'rf':
+        # --- Random Forest branch ---
+        log(f"\nModel: rf (n_estimators={config.n_estimators})")
 
-    # Create model
-    if args.model_type == 'nn':
-        model = AppScannerNN(
-            input_dim=input_dim,
-            num_classes=config.num_classes,
-            hidden_dims=config.hidden_dims,
-            dropout=config.dropout,
+        # Split data 8:1:1
+        np.random.seed(config.seed)
+        n_samples = len(labels)
+        indices = np.random.permutation(n_samples)
+        n_train = int(n_samples * config.train_ratio)
+        n_val = int(n_samples * config.val_ratio)
+
+        train_idx = indices[:n_train]
+        val_idx = indices[n_train:n_train + n_val]
+        test_idx = indices[n_train + n_val:]
+
+        X_train, y_train = features[train_idx], labels[train_idx]
+        X_val, y_val = features[val_idx], labels[val_idx]
+        X_test, y_test = features[test_idx], labels[test_idx]
+
+        log(f"Training samples: {len(y_train)}")
+        log(f"Validation samples: {len(y_val)}")
+        log(f"Test samples: {len(y_test)}")
+
+        results = train_random_forest(
+            X_train, y_train,
+            X_test, y_test,
+            n_estimators=config.n_estimators,
+            prediction_threshold=config.prediction_threshold,
+            X_val=X_val,
+            y_val=y_val,
+            label_map=label_map,
         )
-    elif args.model_type == 'deep':
-        model = AppScannerDeep(
-            input_dim=input_dim,
-            num_classes=config.num_classes,
-            hidden_dim=config.hidden_dims[0],
-            num_layers=4,
-            dropout=config.dropout,
-        )
+
+        return results
+
     else:
-        raise ValueError(f"Unknown model type: {args.model_type}")
+        # --- NN / Deep branch ---
+        # Create dataloaders with 8:1:1 split (train:val:test)
+        train_loader, val_loader, test_loader, norm_params = create_dataloaders(
+            features, labels,
+            batch_size=config.batch_size,
+            train_ratio=config.train_ratio,
+            val_ratio=config.val_ratio,
+            test_ratio=config.test_ratio,
+            seed=config.seed,
+            num_workers=config.num_workers,
+        )
+        input_dim = features.shape[1]
 
-    log(f"\nModel: {args.model_type}")
-    log(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+        # Create model
+        if args.model_type == 'nn':
+            model = AppScannerNN(
+                input_dim=input_dim,
+                num_classes=config.num_classes,
+                hidden_dims=config.hidden_dims,
+                dropout=config.dropout,
+            )
+        elif args.model_type == 'deep':
+            model = AppScannerDeep(
+                input_dim=input_dim,
+                num_classes=config.num_classes,
+                hidden_dim=config.hidden_dims[0],
+                num_layers=4,
+                dropout=config.dropout,
+            )
+        else:
+            raise ValueError(f"Unknown model type: {args.model_type}")
 
-    # Train
-    model, history = train(
-        model, train_loader, val_loader, config,
-        save_dir=config.output_dir,
-    )
+        log(f"\nModel: {args.model_type}")
+        log(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
-    # Test
-    device = torch.device(config.device)
-    metrics = test(
-        model, test_loader, device,
-        prediction_threshold=config.prediction_threshold,
-        label_map=label_map,
-    )
+        # Train
+        model, history = train(
+            model, train_loader, val_loader, config,
+            save_dir=config.output_dir,
+        )
 
-    # Save final model and metadata
-    final_path = os.path.join(config.output_dir, 'final_model.pth')
-    torch.save({
-        'model_state_dict': model.state_dict(),
-        'config': config,
-        'label_map': label_map,
-        'norm_params': norm_params,
-        'history': history,
-        'metrics': {
-            'accuracy': metrics.accuracy,
-            'f1': metrics.f1,
-            'confidence_accuracy': metrics.confidence_accuracy,
-        },
-    }, final_path)
-    log(f"\nModel saved to {final_path}")
+        # Test
+        device = torch.device(config.device)
+        metrics = test(
+            model, test_loader, device,
+            prediction_threshold=config.prediction_threshold,
+            label_map=label_map,
+        )
 
-    # Save training history
-    time = datetime.now().strftime("%Y%m%d_%H%M%S")
-    history_path = os.path.join(config.output_dir, f'history_{time}.json')
-    with open(history_path, 'w') as f:
-        json.dump(history, f, indent=2)
-    log(f"Training history saved to {history_path}")
+        # Save final model and metadata
+        final_path = os.path.join(config.output_dir, 'final_model.pth')
+        torch.save({
+            'model_state_dict': model.state_dict(),
+            'config': config,
+            'label_map': label_map,
+            'norm_params': norm_params,
+            'history': history,
+            'metrics': {
+                'accuracy': metrics.accuracy,
+                'f1': metrics.f1,
+                'confidence_accuracy': metrics.confidence_accuracy,
+            },
+        }, final_path)
+        log(f"\nModel saved to {final_path}")
 
-    return model, metrics
+        # Save training history
+        time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        history_path = os.path.join(config.output_dir, f'history_{time}.json')
+        with open(history_path, 'w') as f:
+            json.dump(history, f, indent=2)
+        log(f"Training history saved to {history_path}")
+
+        return model, metrics
 
 
 def mode_eval(args, config):
@@ -444,58 +475,76 @@ def main():
     # Set seed
     set_seed(args.seed)
 
-    # Create config
+    # Create base config
     config = create_config_from_args(args)
+    base_output_dir = config.output_dir
 
-    # Create dataset-specific output directory to avoid conflicts
-    if args.features_path:
-        dataset_name = Path(args.features_path).stem.replace('_appscanner', '')
-    else:
-        dataset_name = Path(args.data_dir).name
-    config.output_dir = os.path.join(config.output_dir, dataset_name)
-
-    # Create output directory
-    os.makedirs(config.output_dir, exist_ok=True)
-
-    # Setup logging
-    log_path = setup_logging(config.output_dir)
-
-    # Print configuration
-    log("\nConfiguration:")
-    log(f"  Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    log(f"  Mode: {args.mode}")
-    log(f"  Model: {args.model_type}")
-    log(f"  Data: {args.features_path or args.data_dir}")
-    log(f"  Device: {config.device}")
-    log(f"  Epochs: {config.epochs}")
-    log(f"  Batch size: {config.batch_size}")
-    log(f"  Learning rate: {config.learning_rate}")
-    log(f"  Num classes: {args.num_classes if args.num_classes else 'auto'}")
-    log(f"  Prediction threshold: {config.prediction_threshold}")
-    log(f"  Log file: {log_path}")
+    log("=" * 70)
+    log("AppScanner Multi-Dataset Training")
+    log("=" * 70)
+    log(f"Datasets to run: {len(args.features_paths)}")
+    log(f"Model: {args.model_type}")
     log()
 
-    # Run mode
-    if args.mode == 'train':
-        mode_train(args, config)
-    elif args.mode == 'eval':
-        mode_eval(args, config)
-    elif args.mode == 'extract':
-        mode_extract(args, config)
-    elif args.mode == 'compare':
-        mode_compare(args, config)
+    for i, data_path in enumerate(args.features_paths, 1):
+        dataset_start = datetime.now()
+        dataset_name = Path(data_path).stem.replace('_appscanner', '')
 
-    # 记录结束时间并计算用时
+        # Set current dataset
+        args.features_path = data_path
+        args.num_classes = None  # Reset for auto-detect
+        config.output_dir = os.path.join(base_output_dir, dataset_name)
+        os.makedirs(config.output_dir, exist_ok=True)
+
+        # Setup per-dataset logging
+        log_path = setup_logging(config.output_dir)
+
+        log(f"\n{'=' * 70}")
+        log(f"[{i}/{len(args.features_paths)}] Dataset: {dataset_name}")
+        log(f"{'=' * 70}")
+        log(f"\nConfiguration:")
+        log(f"  Start time: {dataset_start.strftime('%Y-%m-%d %H:%M:%S')}")
+        log(f"  Mode: {args.mode}")
+        log(f"  Model: {args.model_type}")
+        log(f"  Data: {data_path}")
+        log(f"  Device: {config.device}")
+        log(f"  Prediction threshold: {config.prediction_threshold}")
+        log(f"  Log file: {log_path}")
+        log()
+
+        try:
+            # Run mode
+            if args.mode == 'train':
+                mode_train(args, config)
+            elif args.mode == 'eval':
+                mode_eval(args, config)
+            elif args.mode == 'extract':
+                mode_extract(args, config)
+            elif args.mode == 'compare':
+                mode_compare(args, config)
+
+            dataset_end = datetime.now()
+            elapsed = dataset_end - dataset_start
+            h, rem = divmod(int(elapsed.total_seconds()), 3600)
+            m, s = divmod(rem, 60)
+            log(f"\n[{dataset_name}] Completed in {h:02d}:{m:02d}:{s:02d}")
+
+        except Exception as e:
+            log(f"\n[{dataset_name}] FAILED: {e}")
+            import traceback
+            log(traceback.format_exc())
+
+    # 总计用时
     end_time = datetime.now()
     elapsed_time = end_time - start_time
     hours, remainder = divmod(int(elapsed_time.total_seconds()), 3600)
     minutes, seconds = divmod(remainder, 60)
 
     log()
-    log(f"Start time:   {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    log(f"End time:     {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    log(f"Elapsed time: {hours:02d}:{minutes:02d}:{seconds:02d}")
-
+    log("=" * 70)
+    log(f"All {len(args.features_paths)} datasets completed.")
+    log(f"Total time: {hours:02d}:{minutes:02d}:{seconds:02d}")
+    log("=" * 70)
 
 if __name__ == '__main__':
     main()
