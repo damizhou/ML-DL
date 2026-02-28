@@ -9,6 +9,7 @@ This module provides training and evaluation functionality for AppScanner.
 
 import os
 import time
+import gc
 import logging
 import numpy as np
 import torch
@@ -30,6 +31,54 @@ from sklearn.metrics import (
 def log(message: str = ""):
     """Log message using configured logger."""
     logging.info(message)
+
+
+def _get_process_memory_usage() -> Tuple[float, float]:
+    """
+    Get current process RSS memory usage.
+
+    Returns:
+        (rss_gb, rss_percent_of_total_ram)
+    """
+    try:
+        import psutil
+
+        proc = psutil.Process(os.getpid())
+        rss_bytes = proc.memory_info().rss
+        total_bytes = psutil.virtual_memory().total
+        rss_gb = rss_bytes / (1024 ** 3)
+        rss_pct = (rss_bytes / total_bytes * 100.0) if total_bytes > 0 else 0.0
+        return rss_gb, rss_pct
+    except Exception:
+        # Linux fallback when psutil is unavailable.
+        try:
+            rss_kb = None
+            total_kb = None
+
+            with open("/proc/self/status", "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            rss_kb = float(parts[1])
+                        break
+
+            with open("/proc/meminfo", "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            total_kb = float(parts[1])
+                        break
+
+            if rss_kb is not None and total_kb is not None and total_kb > 0:
+                rss_gb = (rss_kb * 1024.0) / (1024 ** 3)
+                rss_pct = (rss_kb / total_kb) * 100.0
+                return rss_gb, rss_pct
+        except Exception:
+            pass
+
+    return float("nan"), float("nan")
 
 
 @dataclass
@@ -441,6 +490,95 @@ def test(
     return metrics
 
 
+def _auto_eval_batch_size(
+    n_classes: int,
+    prob_buffer_mb: int = 256,
+    max_batch_size: int = 100_000,
+) -> int:
+    """
+    Compute an evaluation batch size based on probability-buffer memory budget.
+
+    The main evaluation buffer is (batch_size, n_classes) float32.
+    """
+    if n_classes <= 0:
+        return 1
+
+    bytes_per_value = np.dtype(np.float32).itemsize
+    bytes_per_row = n_classes * bytes_per_value
+    target_bytes = max(32, int(prob_buffer_mb)) * 1024 * 1024
+
+    batch_size = target_bytes // bytes_per_row
+    if batch_size <= 0:
+        batch_size = 1
+    return max(1, min(max_batch_size, int(batch_size)))
+
+
+def predict_disk_forest(
+    X: np.ndarray,
+    tree_dir: str,
+    n_estimators: int,
+    n_classes: int,
+    batch_size: Optional[int] = None,
+    prob_buffer_mb: int = 256,
+    desc: str = "data",
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Predict with disk-saved trees using soft voting (mean predict_proba).
+
+    This matches sklearn RandomForestClassifier prediction semantics.
+
+    Returns:
+        predictions: int32 array
+        confidences: float32 array (max averaged class probability)
+    """
+    import joblib
+
+    n = len(X)
+    if n == 0:
+        return np.empty(0, dtype=np.int32), np.empty(0, dtype=np.float32)
+
+    if batch_size is None:
+        batch_size = min(n, _auto_eval_batch_size(n_classes, prob_buffer_mb=prob_buffer_mb))
+    else:
+        batch_size = max(1, min(int(batch_size), n))
+
+    tree_paths = [
+        os.path.join(tree_dir, f'tree_{ti:04d}.joblib')
+        for ti in range(n_estimators)
+    ]
+    for p in tree_paths:
+        if not os.path.exists(p):
+            raise FileNotFoundError(f"Missing tree file: {p}")
+
+    log(
+        f"  Evaluating on {desc} ({n:,} samples) "
+        f"[batch_size={batch_size}, soft-vote]"
+    )
+
+    predictions = np.empty(n, dtype=np.int32)
+    confidences = np.empty(n, dtype=np.float32)
+
+    for start in range(0, n, batch_size):
+        end = min(start + batch_size, n)
+        batch_len = end - start
+        batch_probs = np.zeros((batch_len, n_classes), dtype=np.float32)
+
+        for tree_path in tree_paths:
+            tree = joblib.load(tree_path, mmap_mode='r')
+            tree_probs = tree.predict_proba(X[start:end]).astype(np.float32, copy=False)
+            classes = np.asarray(tree.classes_, dtype=np.int64)
+            batch_probs[:, classes] += tree_probs
+            del tree, tree_probs, classes
+
+        batch_probs /= float(n_estimators)
+        predictions[start:end] = np.argmax(batch_probs, axis=1).astype(np.int32, copy=False)
+        confidences[start:end] = np.max(batch_probs, axis=1).astype(np.float32, copy=False)
+        del batch_probs
+        gc.collect()
+
+    return predictions, confidences
+
+
 def train_random_forest(
     X_train: np.ndarray,
     y_train: np.ndarray,
@@ -448,13 +586,23 @@ def train_random_forest(
     y_test: np.ndarray,
     n_estimators: int = 100,
     prediction_threshold: float = 0.9,
-    n_jobs: int = 32,
+    n_jobs: int = 1,
+    max_depth: Optional[int] = 30,
+    progress_tree_step: int = 1,
     X_val: np.ndarray = None,
     y_val: np.ndarray = None,
     label_map: Dict = None,
+    save_dir: str = './output',
+    seed: int = 42,
+    compute_train_metrics: bool = True,
+    eval_batch_size: Optional[int] = None,
+    eval_prob_buffer_mb: int = 256,
 ) -> Dict[str, Any]:
     """
     Train and evaluate Random Forest classifier (original paper approach).
+
+    Memory-optimized: trains trees in small parallel batches and saves to disk,
+    avoiding keeping the full forest in memory simultaneously.
 
     Args:
         X_train: Training features
@@ -463,67 +611,216 @@ def train_random_forest(
         y_test: Test labels
         n_estimators: Number of trees
         prediction_threshold: Confidence threshold
-        n_jobs: Number of parallel workers for RF training
+        n_jobs: Trees trained in parallel per batch
+        max_depth: Maximum depth of each tree
+        progress_tree_step: Log progress every N trees (0 to disable)
         X_val: Validation features (optional)
         y_val: Validation labels (optional)
         label_map: Label mapping for classification report (optional)
+        save_dir: Directory to save tree files
+        compute_train_metrics: Whether to evaluate full train set after fitting
+        eval_batch_size: Fixed evaluation batch size (None = auto)
+        eval_prob_buffer_mb: Probability buffer memory budget for auto batch size
 
     Returns:
-        Dictionary with model and metrics
+        Dictionary with model path and metrics
     """
-    from models import AppScannerRF
+    import joblib
+    from joblib import Parallel, delayed
+    from sklearn.tree import DecisionTreeClassifier
+    from sklearn.utils import check_random_state
 
-    log(f"Training Random Forest classifier... (n_jobs={n_jobs})")
-    rf = AppScannerRF(n_estimators=n_estimators, n_jobs=n_jobs)
-    rf.fit(X_train, y_train)
+    tree_dir = os.path.join(save_dir, 'rf_trees')
+    os.makedirs(tree_dir, exist_ok=True)
+
+    n_samples = len(X_train)
+    n_features = X_train.shape[1]
+    # n_classes from label_map (covers all classes including train-only ones)
+    if label_map is not None:
+        n_classes = max(int(k) for k in label_map.keys()) + 1
+    else:
+        max_label = int(y_train.max())
+        if y_test is not None:
+            max_label = max(max_label, int(y_test.max()))
+        if y_val is not None:
+            max_label = max(max_label, int(y_val.max()))
+        n_classes = max_label + 1
+
+    log(f"Training Random Forest (disk-based, memory-optimized)")
+    log(f"  Trees: {n_estimators}, max_depth: {max_depth}")
+    log(f"  Samples: {n_samples:,}, Features: {n_features}, Classes: {n_classes:,}")
+    effective_n_jobs = max(1, int(n_jobs))
+    log(f"  Trees per batch: {effective_n_jobs}")
+    log(f"  Tree directory: {tree_dir}")
+
+    rng = check_random_state(seed)
+    train_start = time.time()
+
+    # =====================================================================
+    # Phase 1: Train trees in parallel batches, save each to disk immediately
+    # Peak memory roughly scales with trees_per_batch
+    # =====================================================================
+    tree_seeds = [int(rng.randint(np.iinfo(np.int32).max)) for _ in range(n_estimators)]
+
+    def _fit_and_save_tree(tree_idx: int, tree_seed: int) -> None:
+        tree_rng = check_random_state(tree_seed)
+
+        # Bootstrap via sample_weight (avoids copying X_train)
+        sample_idx = tree_rng.randint(0, n_samples, n_samples)
+        sample_weight = np.bincount(sample_idx, minlength=n_samples).astype(np.float64)
+
+        tree = DecisionTreeClassifier(
+            max_depth=max_depth,
+            max_features='sqrt',
+            random_state=tree_seed,
+        )
+        tree.fit(X_train, y_train, sample_weight=sample_weight)
+
+        # Log process memory right before persisting this tree.
+        rss_gb, rss_pct = _get_process_memory_usage()
+        if np.isfinite(rss_gb) and np.isfinite(rss_pct):
+            log(
+                f"    Tree {tree_idx + 1}/{n_estimators} fitted | "
+                f"Process RSS: {rss_gb:.2f} GB ({rss_pct:.1f}%)"
+            )
+        else:
+            log(
+                f"    Tree {tree_idx + 1}/{n_estimators} fitted | "
+                f"Process RSS: unavailable"
+            )
+
+        joblib.dump(tree, os.path.join(tree_dir, f'tree_{tree_idx:04d}.joblib'))
+
+        del tree, sample_idx, sample_weight
+
+    built = 0
+    for batch_start in range(0, n_estimators, effective_n_jobs):
+        batch_end = min(n_estimators, batch_start + effective_n_jobs)
+        batch_indices = range(batch_start, batch_end)
+        batch_jobs = batch_end - batch_start
+
+        Parallel(n_jobs=batch_jobs, prefer="threads")(
+            delayed(_fit_and_save_tree)(idx, tree_seeds[idx])
+            for idx in batch_indices
+        )
+
+        built = batch_end
+        gc.collect()
+
+        if progress_tree_step > 0 and (
+            built % progress_tree_step == 0 or built == n_estimators
+        ):
+            elapsed = time.time() - train_start
+            log(
+                f"  Tree {built}/{n_estimators} ({100.0 * built / n_estimators:.1f}%) "
+                f"[{elapsed:.0f}s elapsed]"
+            )
+
+    train_elapsed = time.time() - train_start
+    log(f"Training complete: {n_estimators} trees in {train_elapsed:.1f}s")
 
     # --- Train metrics ---
-    train_preds = rf.model.predict(X_train)
-    train_acc = accuracy_score(y_train, train_preds)
-    train_f1 = f1_score(y_train, train_preds, average='weighted', zero_division=0)
-    log(f"Train Accuracy: {train_acc:.4f}")
-    log(f"Train F1 (weighted): {train_f1:.4f}")
+    if compute_train_metrics:
+        train_preds, _ = predict_disk_forest(
+            X_train,
+            tree_dir=tree_dir,
+            n_estimators=n_estimators,
+            n_classes=n_classes,
+            batch_size=eval_batch_size,
+            prob_buffer_mb=eval_prob_buffer_mb,
+            desc="train set",
+        )
+        train_acc = accuracy_score(y_train, train_preds)
+        train_f1 = f1_score(y_train, train_preds, average='weighted', zero_division=0)
+        log(f"Train Accuracy: {train_acc:.4f}")
+        log(f"Train F1 (weighted): {train_f1:.4f}")
+        del train_preds
+        gc.collect()
+    else:
+        train_acc = None
+        train_f1 = None
+        log("Skipping full train-set evaluation to reduce memory/time.")
 
     # --- Val metrics ---
     if X_val is not None and y_val is not None:
-        val_preds = rf.model.predict(X_val)
+        val_preds, _ = predict_disk_forest(
+            X_val,
+            tree_dir=tree_dir,
+            n_estimators=n_estimators,
+            n_classes=n_classes,
+            batch_size=eval_batch_size,
+            prob_buffer_mb=eval_prob_buffer_mb,
+            desc="val set",
+        )
         val_acc = accuracy_score(y_val, val_preds)
         val_f1 = f1_score(y_val, val_preds, average='weighted', zero_division=0)
         log(f"Val Accuracy: {val_acc:.4f}")
         log(f"Val F1 (weighted): {val_f1:.4f}")
+        del val_preds
+        gc.collect()
     else:
         val_acc = None
         val_f1 = None
 
     # --- Test metrics ---
-    predictions, confidences, confident_mask = rf.predict_with_threshold(
-        X_test, threshold=prediction_threshold
-    )
-    test_acc = accuracy_score(y_test, predictions)
-    test_f1 = f1_score(y_test, predictions, average='weighted', zero_division=0)
-    confidence_accuracy = accuracy_score(
-        y_test[confident_mask],
-        predictions[confident_mask]
-    ) if confident_mask.sum() > 0 else 0.0
-    confidence_ratio = confident_mask.sum() / len(confident_mask)
+    if X_test is not None and y_test is not None:
+        test_preds, test_confidences = predict_disk_forest(
+            X_test,
+            tree_dir=tree_dir,
+            n_estimators=n_estimators,
+            n_classes=n_classes,
+            batch_size=eval_batch_size,
+            prob_buffer_mb=eval_prob_buffer_mb,
+            desc="test set",
+        )
+        test_acc = accuracy_score(y_test, test_preds)
+        test_f1 = f1_score(y_test, test_preds, average='weighted', zero_division=0)
 
-    log(f"Test Accuracy: {test_acc:.4f}")
-    log(f"Test F1 (weighted): {test_f1:.4f}")
-    log(f"Confidence Accuracy: {confidence_accuracy:.4f} ({confidence_ratio:.1%})")
+        confident_mask = test_confidences >= prediction_threshold
+        confidence_accuracy = accuracy_score(
+            y_test[confident_mask], test_preds[confident_mask]
+        ) if confident_mask.sum() > 0 else 0.0
+        confidence_ratio = confident_mask.sum() / len(confident_mask)
 
-    # Classification report
-    if label_map is not None:
-        target_names = [label_map[i] for i in sorted(label_map.keys())]
-        report = classification_report(y_test, predictions, target_names=target_names, zero_division=0)
-        log(f"\nClassification Report:\n{report}")
+        log(f"Test Accuracy: {test_acc:.4f}")
+        log(f"Test F1 (weighted): {test_f1:.4f}")
+        log(f"Confidence Accuracy: {confidence_accuracy:.4f} ({confidence_ratio:.1%})")
 
-    # Feature importance
-    importance = rf.feature_importance()
+        # Classification report
+        if label_map is not None:
+            report_labels = sorted(label_map.keys())
+            target_names = [label_map[i] for i in report_labels]
+            report = classification_report(
+                y_test,
+                test_preds,
+                labels=report_labels,
+                target_names=target_names,
+                zero_division=0,
+            )
+            log(f"\nClassification Report:\n{report}")
+    else:
+        test_acc = None
+        test_f1 = None
+        confidence_accuracy = None
+        confidence_ratio = None
+
+    # Feature importance (averaged across all trees)
+    log("Computing feature importance...")
+    importance = np.zeros(n_features)
+    for i in range(n_estimators):
+        tree = joblib.load(os.path.join(tree_dir, f'tree_{i:04d}.joblib'))
+        importance += tree.feature_importances_
+        del tree
+    importance /= n_estimators
+    gc.collect()
+
     top_features = np.argsort(importance)[::-1][:10]
     log(f"Top 10 features: {top_features}")
 
     return {
-        'model': rf,
+        'tree_dir': tree_dir,
+        'n_estimators': n_estimators,
+        'n_classes': n_classes,
         'train_accuracy': train_acc,
         'train_f1': train_f1,
         'val_accuracy': val_acc,

@@ -70,7 +70,14 @@ from data import (
     save_dataset,
     load_dataset,
 )
-from engine import train, test, train_random_forest, compare_approaches
+from engine import (
+    train,
+    test,
+    train_random_forest,
+    compare_approaches,
+    predict_disk_forest,
+)
+from sklearn.metrics import accuracy_score, f1_score, classification_report
 
 
 # =============================================================================
@@ -110,7 +117,9 @@ class TrainArgs:
 
     # Random Forest
     n_estimators: int = 100
-    rf_n_jobs: int = 32
+    rf_max_depth: Optional[int] = 20
+    rf_trees_per_batch: int = 1
+    rf_progress_tree_step: int = 1
 
     # Paths
     output_dir: str = './output'
@@ -190,6 +199,7 @@ def create_config_from_args(args) -> AppScannerConfig:
     config.min_flow_length = args.min_flow_length
     config.max_flow_length = args.max_flow_length
     config.n_estimators = args.n_estimators
+    config.max_depth = args.rf_max_depth
     config.hidden_dims = args.hidden_dims
     config.dropout = args.dropout
     config.input_dim = args.input_dim
@@ -244,10 +254,10 @@ def mode_train(args, config):
     log(f"Number of classes: {config.num_classes}")
 
     if args.model_type == 'rf':
-        # --- Random Forest branch ---
-        log(f"\nModel: rf (n_estimators={config.n_estimators}, n_jobs={args.rf_n_jobs})")
+        # --- Random Forest branch (memory-optimized) ---
+        log(f"\nModel: rf (n_estimators={config.n_estimators}, max_depth={args.rf_max_depth})")
 
-        # Split data 8:1:1
+        # Split indices only (no data copy)
         np.random.seed(config.seed)
         n_samples = len(labels)
         indices = np.random.permutation(n_samples)
@@ -258,24 +268,102 @@ def mode_train(args, config):
         val_idx = indices[n_train:n_train + n_val]
         test_idx = indices[n_train + n_val:]
 
-        X_train, y_train = features[train_idx], labels[train_idx]
-        X_val, y_val = features[val_idx], labels[val_idx]
-        X_test, y_test = features[test_idx], labels[test_idx]
+        log(f"Training samples: {n_train}")
+        log(f"Validation samples: {len(val_idx)}")
+        log(f"Test samples: {len(test_idx)}")
 
-        log(f"Training samples: {len(y_train)}")
-        log(f"Validation samples: {len(y_val)}")
-        log(f"Test samples: {len(y_test)}")
+        # Phase 1: Build X_train only, release features
+        import gc
+        X_train = features[train_idx]
+        y_train = labels[train_idx]
+        # Save split info for later phases
+        data_path = args.features_path
+        del features, labels, indices
+        gc.collect()
 
+        # Train (trees saved to disk in parallel batches)
         results = train_random_forest(
             X_train, y_train,
-            X_test, y_test,
+            X_test=None, y_test=None,  # defer evaluation
             n_estimators=config.n_estimators,
             prediction_threshold=config.prediction_threshold,
-            n_jobs=args.rf_n_jobs,
-            X_val=X_val,
-            y_val=y_val,
+            n_jobs=args.rf_trees_per_batch,
+            max_depth=args.rf_max_depth,
+            progress_tree_step=args.rf_progress_tree_step,
             label_map=label_map,
+            save_dir=config.output_dir,
+            seed=config.seed,
+            compute_train_metrics=False,
         )
+
+        # Release training data
+        del X_train, y_train
+        gc.collect()
+
+        # Phase 2: Reload data for val/test evaluation
+        log("\nReloading data for evaluation...")
+        features, labels, _ = load_dataset(data_path)
+
+        X_val, y_val = features[val_idx], labels[val_idx]
+        X_test, y_test = features[test_idx], labels[test_idx]
+        del features, labels, val_idx, test_idx
+        gc.collect()
+
+        # Evaluate using disk-saved trees (soft voting)
+        tree_dir = results['tree_dir']
+        n_est = results['n_estimators']
+        n_classes = results['n_classes']
+
+        # Val metrics
+        val_preds, _ = predict_disk_forest(
+            X_val,
+            tree_dir=tree_dir,
+            n_estimators=n_est,
+            n_classes=n_classes,
+            desc="val set",
+        )
+        val_acc = accuracy_score(y_val, val_preds)
+        val_f1 = f1_score(y_val, val_preds, average='weighted', zero_division=0)
+        log(f"Val Accuracy: {val_acc:.4f}")
+        log(f"Val F1 (weighted): {val_f1:.4f}")
+        results['val_accuracy'] = val_acc
+        results['val_f1'] = val_f1
+        del X_val, y_val, val_preds
+        gc.collect()
+
+        # Test metrics
+        test_preds, test_confidences = predict_disk_forest(
+            X_test,
+            tree_dir=tree_dir,
+            n_estimators=n_est,
+            n_classes=n_classes,
+            desc="test set",
+        )
+        test_acc = accuracy_score(y_test, test_preds)
+        test_f1 = f1_score(y_test, test_preds, average='weighted', zero_division=0)
+        confident_mask = test_confidences >= config.prediction_threshold
+        confidence_accuracy = accuracy_score(
+            y_test[confident_mask], test_preds[confident_mask]
+        ) if confident_mask.sum() > 0 else 0.0
+        confidence_ratio = confident_mask.sum() / len(confident_mask)
+
+        log(f"Test Accuracy: {test_acc:.4f}")
+        log(f"Test F1 (weighted): {test_f1:.4f}")
+        log(f"Confidence Accuracy: {confidence_accuracy:.4f} ({confidence_ratio:.1%})")
+        results['test_accuracy'] = test_acc
+        results['test_f1'] = test_f1
+        results['confidence_accuracy'] = confidence_accuracy
+        results['confidence_ratio'] = confidence_ratio
+
+        if label_map is not None:
+            report_labels = sorted(label_map.keys())
+            report = classification_report(
+                y_test, test_preds,
+                labels=report_labels,
+                target_names=[label_map[i] for i in report_labels],
+                zero_division=0,
+            )
+            log(f"\nClassification Report:\n{report}")
 
         return results
 
@@ -516,7 +604,9 @@ def main():
         log(f"  Device: {config.device}")
         log(f"  Prediction threshold: {config.prediction_threshold}")
         if args.model_type == 'rf':
-            log(f"  RF n_jobs: {args.rf_n_jobs}")
+            log(f"  RF max_depth: {args.rf_max_depth}")
+            log(f"  RF trees_per_batch: {args.rf_trees_per_batch}")
+            log(f"  RF progress_tree_step: {args.rf_progress_tree_step}")
         log(f"  Log file: {log_path}")
         log()
 
