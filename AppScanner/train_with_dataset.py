@@ -110,7 +110,9 @@ class TrainArgs:
 
     # Random Forest
     n_estimators: int = 100
-    rf_n_jobs: int = 32
+    rf_n_jobs: int = 4
+    rf_max_depth: Optional[int] = 30
+    rf_progress_tree_step: int = 1
 
     # Paths
     output_dir: str = './output'
@@ -190,6 +192,7 @@ def create_config_from_args(args) -> AppScannerConfig:
     config.min_flow_length = args.min_flow_length
     config.max_flow_length = args.max_flow_length
     config.n_estimators = args.n_estimators
+    config.max_depth = args.rf_max_depth
     config.hidden_dims = args.hidden_dims
     config.dropout = args.dropout
     config.input_dim = args.input_dim
@@ -245,7 +248,10 @@ def mode_train(args, config):
 
     if args.model_type == 'rf':
         # --- Random Forest branch ---
-        log(f"\nModel: rf (n_estimators={config.n_estimators}, n_jobs={args.rf_n_jobs})")
+        log(
+            f"\nModel: rf (n_estimators={config.n_estimators}, "
+            f"max_depth={args.rf_max_depth})"
+        )
 
         # Split data 8:1:1
         np.random.seed(config.seed)
@@ -272,6 +278,8 @@ def mode_train(args, config):
             n_estimators=config.n_estimators,
             prediction_threshold=config.prediction_threshold,
             n_jobs=args.rf_n_jobs,
+            max_depth=args.rf_max_depth,
+            progress_tree_step=args.rf_progress_tree_step,
             X_val=X_val,
             y_val=y_val,
             label_map=label_map,
@@ -517,6 +525,8 @@ def main():
         log(f"  Prediction threshold: {config.prediction_threshold}")
         if args.model_type == 'rf':
             log(f"  RF n_jobs: {args.rf_n_jobs}")
+            log(f"  RF max_depth: {args.rf_max_depth}")
+            log(f"  RF progress_tree_step: {args.rf_progress_tree_step}")
         log(f"  Log file: {log_path}")
         log()
 

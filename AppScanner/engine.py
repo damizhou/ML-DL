@@ -449,6 +449,8 @@ def train_random_forest(
     n_estimators: int = 100,
     prediction_threshold: float = 0.9,
     n_jobs: int = 32,
+    max_depth: Optional[int] = 30,
+    progress_tree_step: int = 0,
     X_val: np.ndarray = None,
     y_val: np.ndarray = None,
     label_map: Dict = None,
@@ -464,6 +466,10 @@ def train_random_forest(
         n_estimators: Number of trees
         prediction_threshold: Confidence threshold
         n_jobs: Number of parallel workers for RF training
+        max_depth: Maximum depth of each tree
+        progress_tree_step: Progress log step in number of trees.
+            If >0 and < n_estimators, train incrementally with warm_start
+            and log progress every step.
         X_val: Validation features (optional)
         y_val: Validation labels (optional)
         label_map: Label mapping for classification report (optional)
@@ -473,9 +479,20 @@ def train_random_forest(
     """
     from models import AppScannerRF
 
-    log(f"Training Random Forest classifier... (n_jobs={n_jobs})")
-    rf = AppScannerRF(n_estimators=n_estimators, n_jobs=n_jobs)
-    rf.fit(X_train, y_train)
+    log("Training Random Forest classifier...")
+    rf = AppScannerRF(n_estimators=n_estimators, n_jobs=n_jobs, max_depth=max_depth)
+    if progress_tree_step > 0 and progress_tree_step < n_estimators:
+        rf.model.set_params(warm_start=True, n_estimators=0)
+        built = 0
+        while built < n_estimators:
+            built = min(n_estimators, built + progress_tree_step)
+            rf.model.set_params(n_estimators=built)
+            rf.model.fit(X_train, y_train)
+            log(f"RF training progress: {built}/{n_estimators} trees ({100.0 * built / n_estimators:.1f}%)")
+        rf.model.set_params(warm_start=False, n_estimators=n_estimators)
+        rf.is_fitted = True
+    else:
+        rf.fit(X_train, y_train)
 
     # --- Train metrics ---
     train_preds = rf.model.predict(X_train)
