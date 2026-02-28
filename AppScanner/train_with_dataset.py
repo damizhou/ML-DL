@@ -110,6 +110,7 @@ class TrainArgs:
 
     # Random Forest
     n_estimators: int = 100
+    rf_n_jobs: int = 32
 
     # Paths
     output_dir: str = './output'
@@ -127,12 +128,23 @@ class TrainArgs:
             self.hidden_dims = [256, 128, 64]
         if self.features_paths is None:
             self.features_paths = [
+                '/home/pcz/code/DL/AppScanner/data/vpn/vpn_appscanner.pkl',
+                '/home/pcz/code/DL/AppScanner/data/novpn/novpn_appscanner.pkl',
+                '/home/pcz/code/DL/AppScanner/data/novpn_top10/novpn_top10_appscanner.pkl',
+                '/home/pcz/code/DL/AppScanner/data/vpn_top10/vpn_top10_appscanner.pkl',
+                '/home/pcz/code/DL/AppScanner/data/novpn_top50/novpn_top50_appscanner.pkl',
+                '/home/pcz/code/DL/AppScanner/data/vpn_top50/vpn_top50_appscanner.pkl',
+                '/home/pcz/code/DL/AppScanner/data/novpn_top100/novpn_top100_appscanner.pkl',
+                '/home/pcz/code/DL/AppScanner/data/vpn_top100/vpn_top100_appscanner.pkl',
                 '/home/pcz/code/DL/AppScanner/data/novpn_top500/novpn_top500_appscanner.pkl',
                 '/home/pcz/code/DL/AppScanner/data/vpn_top500/vpn_top500_appscanner.pkl',
-                # '/home/pcz/code/DL/AppScanner/data/novpn_top1000/novpn_top1000_appscanner.pkl',
-                # '/home/pcz/code/DL/AppScanner/data/vpn_top1000/vpn_top1000_appscanner.pkl',
-                # '/home/pcz/code/DL/AppScanner/data/vpn/vpn_appscanner.pkl',
-                # '/home/pcz/code/DL/AppScanner/data/novpn/novpn_appscanner.pkl',
+                '/home/pcz/code/DL/AppScanner/data/novpn_top1000/novpn_top1000_appscanner.pkl',
+                '/home/pcz/code/DL/AppScanner/data/vpn_top1000/vpn_top1000_appscanner.pkl',
+                '/home/pcz/code/DL/AppScanner/data/ustc/ustc_appscanner.pkl',
+                '/home/pcz/code/DL/AppScanner/data/iscxvpn/iscxvpn_appscanner.pkl',
+                '/home/pcz/code/DL/AppScanner/data/iscxtor/iscxtor_appscanner.pkl',
+                '/home/pcz/code/DL/AppScanner/data/cross_platform/cross_platform_appscanner.pkl',
+                '/home/pcz/code/DL/AppScanner/data/cic_iot_2022/cic_iot_2022_appscanner.pkl',
             ]
 
 
@@ -231,16 +243,9 @@ def mode_train(args, config):
     log(f"Features shape: {features.shape}")
     log(f"Number of classes: {config.num_classes}")
 
-    # Print class distribution
-    log("\nClass distribution:")
-    unique, counts = np.unique(labels, return_counts=True)
-    for label_id, count in zip(unique, counts):
-        class_name = label_map.get(label_id, f"Unknown({label_id})")
-        log(f"  {class_name}: {count} ({count/len(labels)*100:.1f}%)")
-
     if args.model_type == 'rf':
         # --- Random Forest branch ---
-        log(f"\nModel: rf (n_estimators={config.n_estimators})")
+        log(f"\nModel: rf (n_estimators={config.n_estimators}, n_jobs={args.rf_n_jobs})")
 
         # Split data 8:1:1
         np.random.seed(config.seed)
@@ -266,6 +271,7 @@ def mode_train(args, config):
             X_test, y_test,
             n_estimators=config.n_estimators,
             prediction_threshold=config.prediction_threshold,
+            n_jobs=args.rf_n_jobs,
             X_val=X_val,
             y_val=y_val,
             label_map=label_map,
@@ -509,6 +515,8 @@ def main():
         log(f"  Data: {data_path}")
         log(f"  Device: {config.device}")
         log(f"  Prediction threshold: {config.prediction_threshold}")
+        if args.model_type == 'rf':
+            log(f"  RF n_jobs: {args.rf_n_jobs}")
         log(f"  Log file: {log_path}")
         log()
 

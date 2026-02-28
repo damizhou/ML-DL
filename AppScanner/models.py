@@ -225,10 +225,10 @@ class AppScannerRF:
     def __init__(
         self,
         n_estimators: int = 100,
-        max_depth: Optional[int] = None,
+        max_depth: Optional[int] = 30,
         min_samples_split: int = 2,
         random_state: int = 42,
-        n_jobs: int = 16,
+        n_jobs: int = 32,
     ):
         if not SKLEARN_AVAILABLE:
             raise ImportError("scikit-learn is required for Random Forest classifier")

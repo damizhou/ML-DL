@@ -448,6 +448,7 @@ def train_random_forest(
     y_test: np.ndarray,
     n_estimators: int = 100,
     prediction_threshold: float = 0.9,
+    n_jobs: int = 32,
     X_val: np.ndarray = None,
     y_val: np.ndarray = None,
     label_map: Dict = None,
@@ -462,6 +463,7 @@ def train_random_forest(
         y_test: Test labels
         n_estimators: Number of trees
         prediction_threshold: Confidence threshold
+        n_jobs: Number of parallel workers for RF training
         X_val: Validation features (optional)
         y_val: Validation labels (optional)
         label_map: Label mapping for classification report (optional)
@@ -471,8 +473,8 @@ def train_random_forest(
     """
     from models import AppScannerRF
 
-    log("Training Random Forest classifier...")
-    rf = AppScannerRF(n_estimators=n_estimators)
+    log(f"Training Random Forest classifier... (n_jobs={n_jobs})")
+    rf = AppScannerRF(n_estimators=n_estimators, n_jobs=n_jobs)
     rf.fit(X_train, y_train)
 
     # --- Train metrics ---
