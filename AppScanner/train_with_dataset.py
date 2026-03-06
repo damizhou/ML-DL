@@ -75,9 +75,8 @@ from engine import (
     test,
     train_random_forest,
     compare_approaches,
-    predict_disk_forest,
 )
-from sklearn.metrics import accuracy_score, f1_score, classification_report
+from resume_rf_evaluation import evaluate_saved_forest_splits
 
 
 # =============================================================================
@@ -89,56 +88,71 @@ class TrainArgs:
     """Training arguments - modify these directly instead of command line."""
 
     # Mode: 'train', 'eval', 'extract', 'compare'
-    mode: str = 'train'
+    mode: str = 'train'  # 运行模式：训练/评估/特征提取/方案对比。
 
     # Data paths
-    data_dir: str = './data'                    # Directory with PCAP files
-    csv_path: Optional[str] = None              # CSV file with features
-    features_paths: List[str] = None            # List of pre-extracted feature files
-    features_path: Optional[str] = None         # Current dataset (set automatically)
+    data_dir: str = './data'  # 原始 PCAP 目录（mode=extract 或无特征文件时使用）。
+    csv_path: Optional[str] = None  # CSV 特征文件路径（优先于 data_dir）。
+    features_paths: List[str] = None  # 批量运行的数据集路径列表（main 循环逐个处理）。
+    features_path: Optional[str] = None  # 当前正在处理的单个数据集路径（循环内自动赋值）。
+
     # Model configuration
-    model_type: str = 'rf'                      # 'nn', 'deep', or 'rf'
-    num_classes: Optional[int] = None           # Auto-detect from data
-    input_dim: int = 54                         # 54 statistical features
-    hidden_dims: List[int] = None               # Default: [256, 128, 64]
-    dropout: float = 0.3
+    model_type: str = 'rf'  # 模型类型：'nn' / 'deep' / 'rf'。
+    num_classes: Optional[int] = None  # 类别数；None 时从数据自动推断。
+    input_dim: int = 54  # 输入维度（AppScanner 统计特征维度，默认 54）。
+    hidden_dims: List[int] = None  # MLP 隐层维度列表；None 时在 __post_init__ 设置默认值。
+    dropout: float = 0.3  # NN/Deep 模型 dropout 比例。
 
     # Training parameters
-    epochs: int = 100
-    batch_size: int = 128
-    lr: float = 0.001
-    weight_decay: float = 1e-4
-    patience: int = 10
+    epochs: int = 100  # 神经网络训练轮数。
+    batch_size: int = 128  # 神经网络 DataLoader 批大小。
+    lr: float = 0.001  # 学习率。
+    weight_decay: float = 1e-4  # 权重衰减（L2 正则）。
+    patience: int = 10  # 早停耐心轮数。
 
     # AppScanner specific
-    prediction_threshold: float = 0.9
-    min_flow_length: int = 7
-    max_flow_length: int = 260
+    prediction_threshold: float = 0.9  # 置信度阈值（用于 confidence_accuracy）。
+    min_flow_length: int = 7  # 流最小包数（短于该值会被过滤）。
+    max_flow_length: int = 260  # 流最大包数（超过该值会截断）。
 
     # Random Forest
-    n_estimators: int = 100
-    rf_max_depth: Optional[int] = 20
-    rf_trees_per_batch: int = 1
-    rf_progress_tree_step: int = 1
+    n_estimators: int = 100  # 随机森林树数量。
+    rf_max_depth: Optional[int] = 20  # 单棵树最大深度；None 表示不限制。
+    rf_trees_per_batch: int = 25  # 训练阶段每批并行训练的树数（n_jobs）。
+    rf_val_trees_per_batch: Optional[int] = 10  # 评估 val 时 batch_first 路径的并行树数。
+    rf_test_trees_per_batch: Optional[int] = 10  # 评估 test 时 batch_first 路径的并行树数。
+    rf_eval_batch_size: Optional[int] = None  # 评估样本批大小；None 按概率缓冲自动估算。
+    rf_eval_prob_buffer_mb: int = 256  # 评估自动批大小的概率缓冲内存预算（MB）。
+    rf_eval_strategy: str = 'tree_first'  # 评估策略：auto | batch_first | tree_first。
+    rf_tree_first_max_prob_mb: int = 4096  # auto 选择 tree_first 时允许的全量概率矩阵上限（MB）。
+    rf_tree_prefetch: int = 1  # tree_first 模式预加载队列长度（后台 I/O 预取树数）。
+    rf_tree_eval_workers: int = 10  # tree_first 每批并行评估树数（每组 10 棵并行评估）。
+    rf_log_each_tree_time: bool = True  # 是否打印每棵树评估耗时。
+    rf_combine_val_test: bool = True  # 是否将 val/test 合并一次推理后再切分结果。
+    rf_progress_tree_step: int = 4  # 训练阶段每隔多少棵树打印一次进度。
 
     # Paths
-    output_dir: str = './output'
-    checkpoint: Optional[str] = None
+    output_dir: str = './output'  # 输出目录（模型、日志、结果文件）。
+    checkpoint: Optional[str] = None  # 评估模式加载的模型检查点路径。
 
     # Device: 'auto', 'cuda', 'cpu'
-    device: str = 'auto'
+    device: str = 'auto'  # 设备选择：auto 自动选 CUDA/CPU。
 
     # Misc
-    seed: int = 42
-    num_workers: int = 4
+    seed: int = 42  # 全局随机种子（数据划分与训练可复现）。
+    num_workers: int = 4  # DataLoader 子进程数（主要影响 NN/Deep 训练与评估）。
 
     def __post_init__(self):
         if self.hidden_dims is None:
             self.hidden_dims = [256, 128, 64]
+        if self.rf_val_trees_per_batch is None:
+            self.rf_val_trees_per_batch = 10
+        if self.rf_test_trees_per_batch is None:
+            self.rf_test_trees_per_batch = 10
         if self.features_paths is None:
             self.features_paths = [
-                '/home/pcz/code/DL/AppScanner/data/vpn/vpn_appscanner.pkl',
-                '/home/pcz/code/DL/AppScanner/data/novpn/novpn_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/vpn/vpn_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/novpn/novpn_appscanner.pkl',
                 '/home/pcz/code/DL/AppScanner/data/novpn_top10/novpn_top10_appscanner.pkl',
                 '/home/pcz/code/DL/AppScanner/data/vpn_top10/vpn_top10_appscanner.pkl',
                 '/home/pcz/code/DL/AppScanner/data/novpn_top50/novpn_top50_appscanner.pkl',
@@ -256,6 +270,17 @@ def mode_train(args, config):
     if args.model_type == 'rf':
         # --- Random Forest branch (memory-optimized) ---
         log(f"\nModel: rf (n_estimators={config.n_estimators}, max_depth={args.rf_max_depth})")
+        log(f"RF train trees_per_batch: {args.rf_trees_per_batch}")
+        log(f"RF val trees_per_batch: {args.rf_val_trees_per_batch}")
+        log(f"RF test trees_per_batch: {args.rf_test_trees_per_batch}")
+        log(f"RF eval batch_size: {args.rf_eval_batch_size}")
+        log(f"RF eval prob_buffer_mb: {args.rf_eval_prob_buffer_mb}")
+        log(f"RF eval strategy: {args.rf_eval_strategy}")
+        log(f"RF tree_first max_prob_mb: {args.rf_tree_first_max_prob_mb}")
+        log(f"RF tree prefetch: {args.rf_tree_prefetch}")
+        log(f"RF tree eval workers: {args.rf_tree_eval_workers}")
+        log(f"RF log each tree time: {args.rf_log_each_tree_time}")
+        log(f"RF combine val+test: {args.rf_combine_val_test}")
 
         # Split indices only (no data copy)
         np.random.seed(config.seed)
@@ -294,6 +319,8 @@ def mode_train(args, config):
             save_dir=config.output_dir,
             seed=config.seed,
             compute_train_metrics=False,
+            eval_batch_size=args.rf_eval_batch_size,
+            eval_prob_buffer_mb=args.rf_eval_prob_buffer_mb,
         )
 
         # Release training data
@@ -304,66 +331,43 @@ def mode_train(args, config):
         log("\nReloading data for evaluation...")
         features, labels, _ = load_dataset(data_path)
 
-        X_val, y_val = features[val_idx], labels[val_idx]
-        X_test, y_test = features[test_idx], labels[test_idx]
-        del features, labels, val_idx, test_idx
-        gc.collect()
-
         # Evaluate using disk-saved trees (soft voting)
         tree_dir = results['tree_dir']
         n_est = results['n_estimators']
         n_classes = results['n_classes']
-
-        # Val metrics
-        val_preds, _ = predict_disk_forest(
-            X_val,
+        results['rf_eval_strategy'] = args.rf_eval_strategy
+        results['rf_tree_first_max_prob_mb'] = args.rf_tree_first_max_prob_mb
+        results['rf_tree_prefetch'] = args.rf_tree_prefetch
+        results['rf_tree_eval_workers'] = args.rf_tree_eval_workers
+        results['rf_log_each_tree_time'] = args.rf_log_each_tree_time
+        results['rf_combine_val_test'] = args.rf_combine_val_test
+        results['rf_val_trees_per_batch'] = args.rf_val_trees_per_batch
+        results['rf_test_trees_per_batch'] = args.rf_test_trees_per_batch
+        eval_results = evaluate_saved_forest_splits(
+            features,
+            labels,
+            val_idx=val_idx,
+            test_idx=test_idx,
             tree_dir=tree_dir,
             n_estimators=n_est,
             n_classes=n_classes,
-            desc="val set",
+            threshold=config.prediction_threshold,
+            eval_batch_size=args.rf_eval_batch_size,
+            prob_buffer_mb=args.rf_eval_prob_buffer_mb,
+            val_trees_per_batch=args.rf_val_trees_per_batch,
+            test_trees_per_batch=args.rf_test_trees_per_batch,
+            eval_strategy=args.rf_eval_strategy,
+            tree_first_max_prob_mb=args.rf_tree_first_max_prob_mb,
+            tree_prefetch=args.rf_tree_prefetch,
+            tree_eval_workers=args.rf_tree_eval_workers,
+            log_each_tree_time=args.rf_log_each_tree_time,
+            combine_val_test=args.rf_combine_val_test,
+            label_map=label_map,
+            logger=log,
         )
-        val_acc = accuracy_score(y_val, val_preds)
-        val_f1 = f1_score(y_val, val_preds, average='weighted', zero_division=0)
-        log(f"Val Accuracy: {val_acc:.4f}")
-        log(f"Val F1 (weighted): {val_f1:.4f}")
-        results['val_accuracy'] = val_acc
-        results['val_f1'] = val_f1
-        del X_val, y_val, val_preds
+        results.update(eval_results)
+        del features, labels, val_idx, test_idx
         gc.collect()
-
-        # Test metrics
-        test_preds, test_confidences = predict_disk_forest(
-            X_test,
-            tree_dir=tree_dir,
-            n_estimators=n_est,
-            n_classes=n_classes,
-            desc="test set",
-        )
-        test_acc = accuracy_score(y_test, test_preds)
-        test_f1 = f1_score(y_test, test_preds, average='weighted', zero_division=0)
-        confident_mask = test_confidences >= config.prediction_threshold
-        confidence_accuracy = accuracy_score(
-            y_test[confident_mask], test_preds[confident_mask]
-        ) if confident_mask.sum() > 0 else 0.0
-        confidence_ratio = confident_mask.sum() / len(confident_mask)
-
-        log(f"Test Accuracy: {test_acc:.4f}")
-        log(f"Test F1 (weighted): {test_f1:.4f}")
-        log(f"Confidence Accuracy: {confidence_accuracy:.4f} ({confidence_ratio:.1%})")
-        results['test_accuracy'] = test_acc
-        results['test_f1'] = test_f1
-        results['confidence_accuracy'] = confidence_accuracy
-        results['confidence_ratio'] = confidence_ratio
-
-        if label_map is not None:
-            report_labels = sorted(label_map.keys())
-            report = classification_report(
-                y_test, test_preds,
-                labels=report_labels,
-                target_names=[label_map[i] for i in report_labels],
-                zero_division=0,
-            )
-            log(f"\nClassification Report:\n{report}")
 
         return results
 
@@ -605,7 +609,17 @@ def main():
         log(f"  Prediction threshold: {config.prediction_threshold}")
         if args.model_type == 'rf':
             log(f"  RF max_depth: {args.rf_max_depth}")
-            log(f"  RF trees_per_batch: {args.rf_trees_per_batch}")
+            log(f"  RF train trees_per_batch: {args.rf_trees_per_batch}")
+            log(f"  RF val trees_per_batch: {args.rf_val_trees_per_batch}")
+            log(f"  RF test trees_per_batch: {args.rf_test_trees_per_batch}")
+            log(f"  RF eval batch_size: {args.rf_eval_batch_size}")
+            log(f"  RF eval prob_buffer_mb: {args.rf_eval_prob_buffer_mb}")
+            log(f"  RF eval strategy: {args.rf_eval_strategy}")
+            log(f"  RF tree_first max_prob_mb: {args.rf_tree_first_max_prob_mb}")
+            log(f"  RF tree prefetch: {args.rf_tree_prefetch}")
+            log(f"  RF tree eval workers: {args.rf_tree_eval_workers}")
+            log(f"  RF log each tree time: {args.rf_log_each_tree_time}")
+            log(f"  RF combine val+test: {args.rf_combine_val_test}")
             log(f"  RF progress_tree_step: {args.rf_progress_tree_step}")
         log(f"  Log file: {log_path}")
         log()

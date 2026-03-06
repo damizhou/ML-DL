@@ -520,6 +520,12 @@ def predict_disk_forest(
     n_classes: int,
     batch_size: Optional[int] = None,
     prob_buffer_mb: int = 256,
+    trees_per_batch: int = 1,
+    eval_strategy: str = "auto",
+    tree_first_max_prob_mb: int = 2048,
+    tree_prefetch: int = 1,
+    tree_eval_workers: int = 1,
+    log_each_tree_time: bool = False,
     desc: str = "data",
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -527,11 +533,27 @@ def predict_disk_forest(
 
     This matches sklearn RandomForestClassifier prediction semantics.
 
+    Args:
+        X: Feature matrix to evaluate
+        tree_dir: Directory containing tree_*.joblib files
+        n_estimators: Number of trees to use
+        n_classes: Number of classes (max_label + 1)
+        batch_size: Sample batch size for evaluation
+        prob_buffer_mb: Memory budget for auto sample batch size
+        trees_per_batch: Number of trees to evaluate in parallel
+        eval_strategy: 'auto', 'batch_first', or 'tree_first'
+        tree_first_max_prob_mb: Max full prob-buffer size for auto tree_first
+        tree_prefetch: Tree prefetch queue size for tree_first pipeline
+        tree_eval_workers: Parallel tree workers in tree_first (shared merge)
+        log_each_tree_time: Whether to log elapsed time for each tree (tree_first)
+        desc: Dataset description for logs
+
     Returns:
         predictions: int32 array
         confidences: float32 array (max averaged class probability)
     """
     import joblib
+    from joblib import Parallel, delayed
 
     n = len(X)
     if n == 0:
@@ -541,6 +563,7 @@ def predict_disk_forest(
         batch_size = min(n, _auto_eval_batch_size(n_classes, prob_buffer_mb=prob_buffer_mb))
     else:
         batch_size = max(1, min(int(batch_size), n))
+    trees_per_batch = max(1, int(trees_per_batch))
 
     tree_paths = [
         os.path.join(tree_dir, f'tree_{ti:04d}.joblib')
@@ -550,31 +573,184 @@ def predict_disk_forest(
         if not os.path.exists(p):
             raise FileNotFoundError(f"Missing tree file: {p}")
 
+    total_prob_mb = (n * n_classes * np.dtype(np.float32).itemsize) / (1024 ** 2)
+    strategy = str(eval_strategy).strip().lower()
+    if strategy not in {"auto", "batch_first", "tree_first"}:
+        raise ValueError(
+            f"Invalid eval_strategy={eval_strategy!r}, expected one of "
+            f"['auto', 'batch_first', 'tree_first']"
+        )
+    if strategy == "auto":
+        strategy = "tree_first" if total_prob_mb <= float(tree_first_max_prob_mb) else "batch_first"
+
     log(
         f"  Evaluating on {desc} ({n:,} samples) "
-        f"[batch_size={batch_size}, soft-vote]"
+        f"[strategy={strategy}, batch_size={batch_size}, trees_per_batch={trees_per_batch}, "
+        f"tree_prefetch={max(1, int(tree_prefetch))}, tree_eval_workers={max(1, int(tree_eval_workers))}, "
+        f"log_each_tree_time={bool(log_each_tree_time)}, soft-vote, prob_buffer~{total_prob_mb:.1f}MB]"
     )
+
+    if strategy == "tree_first":
+        # Keep one full probability buffer in memory so each tree is loaded exactly once.
+        all_probs = np.zeros((n, n_classes), dtype=np.float32)
+        tree_progress_every = max(1, n_estimators // 20)
+        prefetch = max(1, int(tree_prefetch))
+        eval_workers = max(1, int(tree_eval_workers))
+
+        def _predict_loaded_tree_batch(tree, classes: np.ndarray, x_batch: np.ndarray):
+            t0 = time.time()
+            probs = tree.predict_proba(x_batch).astype(np.float32, copy=False)
+            return classes, probs, (time.time() - t0)
+
+        def _accumulate_tree_group(
+            tree_group: List[Tuple[int, Any, np.ndarray]]
+        ) -> None:
+            elapsed_by_tree: Dict[int, float] = {idx: 0.0 for idx, _, _ in tree_group}
+            group_size = len(tree_group)
+
+            for start in range(0, n, batch_size):
+                end = min(start + batch_size, n)
+                x_batch = X[start:end]
+
+                if group_size == 1:
+                    tree_idx, tree, classes = tree_group[0]
+                    classes_out, tree_probs, elapsed = _predict_loaded_tree_batch(
+                        tree, classes, x_batch
+                    )
+                    all_probs[start:end, classes_out] += tree_probs
+                    elapsed_by_tree[tree_idx] += elapsed
+                    del classes_out, tree_probs
+                else:
+                    outputs = Parallel(n_jobs=group_size, prefer="threads")(
+                        delayed(_predict_loaded_tree_batch)(tree, classes, x_batch)
+                        for _, tree, classes in tree_group
+                    )
+                    for (tree_idx, _, _), (classes_out, tree_probs, elapsed) in zip(
+                        tree_group, outputs
+                    ):
+                        all_probs[start:end, classes_out] += tree_probs
+                        elapsed_by_tree[tree_idx] += elapsed
+                        del classes_out, tree_probs
+                    del outputs
+
+                del x_batch
+
+            for tree_idx, _, _ in tree_group:
+                if log_each_tree_time:
+                    log(
+                        f"    {desc} tree {tree_idx}/{n_estimators} elapsed: "
+                        f"{elapsed_by_tree[tree_idx]:.2f}s"
+                    )
+                if (
+                    tree_idx == 1
+                    or tree_idx % tree_progress_every == 0
+                    or tree_idx == n_estimators
+                ):
+                    log(
+                        f"    {desc} progress: tree {tree_idx}/{n_estimators} "
+                        f"({100.0 * tree_idx / n_estimators:.1f}%)"
+                    )
+
+        from queue import Queue
+        from threading import Thread
+
+        queue_capacity = min(max(prefetch, eval_workers), n_estimators)
+        load_queue: Queue = Queue(maxsize=queue_capacity)
+
+        def _loader():
+            try:
+                for tree_idx, tree_path in enumerate(tree_paths, start=1):
+                    # Load full tree object into RAM (disable mmap paging).
+                    tree = joblib.load(tree_path)
+                    classes = np.asarray(tree.classes_, dtype=np.int64)
+                    load_queue.put(("tree", tree_idx, tree, classes))
+            except Exception as exc:
+                load_queue.put(("error", exc, None, None))
+            finally:
+                load_queue.put(("done", None, None, None))
+
+        loader = Thread(target=_loader, daemon=True)
+        loader.start()
+
+        processed = 0
+        done_seen = False
+        buffered: List[Tuple[int, Any, np.ndarray]] = []
+
+        while processed < n_estimators:
+            while len(buffered) < eval_workers and not done_seen:
+                msg, a, b, c = load_queue.get()
+                if msg == "error":
+                    raise a
+                if msg == "done":
+                    done_seen = True
+                    break
+                buffered.append((int(a), b, c))
+
+            if not buffered:
+                break
+
+            tree_group = buffered[:eval_workers]
+            buffered = buffered[eval_workers:]
+            _accumulate_tree_group(tree_group)
+            processed += len(tree_group)
+            for _, tree, classes in tree_group:
+                del tree, classes
+            gc.collect()
+
+        loader.join(timeout=1.0)
+
+        all_probs /= float(n_estimators)
+        predictions = np.argmax(all_probs, axis=1).astype(np.int32, copy=False)
+        confidences = np.max(all_probs, axis=1).astype(np.float32, copy=False)
+        del all_probs
+        gc.collect()
+        return predictions, confidences
 
     predictions = np.empty(n, dtype=np.int32)
     confidences = np.empty(n, dtype=np.float32)
+    n_batches = (n + batch_size - 1) // batch_size
+    progress_every = max(1, n_batches // 20)
 
-    for start in range(0, n, batch_size):
+    for batch_idx, start in enumerate(range(0, n, batch_size), start=1):
         end = min(start + batch_size, n)
         batch_len = end - start
+        x_batch = X[start:end]
         batch_probs = np.zeros((batch_len, n_classes), dtype=np.float32)
 
-        for tree_path in tree_paths:
-            tree = joblib.load(tree_path, mmap_mode='r')
-            tree_probs = tree.predict_proba(X[start:end]).astype(np.float32, copy=False)
+        def _predict_tree_probs(tree_path: str):
+            # Load full tree object into RAM (disable mmap paging).
+            tree = joblib.load(tree_path)
+            tree_probs = tree.predict_proba(x_batch).astype(np.float32, copy=False)
             classes = np.asarray(tree.classes_, dtype=np.int64)
-            batch_probs[:, classes] += tree_probs
-            del tree, tree_probs, classes
+            del tree
+            return classes, tree_probs
+
+        for tree_start in range(0, n_estimators, trees_per_batch):
+            tree_end = min(n_estimators, tree_start + trees_per_batch)
+            chunk_paths = tree_paths[tree_start:tree_end]
+
+            if len(chunk_paths) == 1:
+                classes, tree_probs = _predict_tree_probs(chunk_paths[0])
+                batch_probs[:, classes] += tree_probs
+                del classes, tree_probs
+            else:
+                chunk_outputs = Parallel(n_jobs=len(chunk_paths), prefer="threads")(
+                    delayed(_predict_tree_probs)(p) for p in chunk_paths
+                )
+                for classes, tree_probs in chunk_outputs:
+                    batch_probs[:, classes] += tree_probs
+                del chunk_outputs
 
         batch_probs /= float(n_estimators)
         predictions[start:end] = np.argmax(batch_probs, axis=1).astype(np.int32, copy=False)
         confidences[start:end] = np.max(batch_probs, axis=1).astype(np.float32, copy=False)
-        del batch_probs
+        del batch_probs, x_batch
         gc.collect()
+        if batch_idx == 1 or batch_idx % progress_every == 0 or batch_idx == n_batches:
+            log(
+                f"    {desc} progress: batch {batch_idx}/{n_batches} "
+                f"({end:,}/{n:,} samples, {100.0 * end / n:.1f}%)"
+            )
 
     return predictions, confidences
 
@@ -728,6 +904,7 @@ def train_random_forest(
             n_classes=n_classes,
             batch_size=eval_batch_size,
             prob_buffer_mb=eval_prob_buffer_mb,
+            trees_per_batch=effective_n_jobs,
             desc="train set",
         )
         train_acc = accuracy_score(y_train, train_preds)
@@ -750,6 +927,7 @@ def train_random_forest(
             n_classes=n_classes,
             batch_size=eval_batch_size,
             prob_buffer_mb=eval_prob_buffer_mb,
+            trees_per_batch=effective_n_jobs,
             desc="val set",
         )
         val_acc = accuracy_score(y_val, val_preds)
@@ -771,6 +949,7 @@ def train_random_forest(
             n_classes=n_classes,
             batch_size=eval_batch_size,
             prob_buffer_mb=eval_prob_buffer_mb,
+            trees_per_batch=effective_n_jobs,
             desc="test set",
         )
         test_acc = accuracy_score(y_test, test_preds)
@@ -811,6 +990,10 @@ def train_random_forest(
         tree = joblib.load(os.path.join(tree_dir, f'tree_{i:04d}.joblib'))
         importance += tree.feature_importances_
         del tree
+        if progress_tree_step > 0 and (
+            (i + 1) % progress_tree_step == 0 or (i + 1) == n_estimators
+        ):
+            log(f"  Feature importance: {i + 1}/{n_estimators}")
     importance /= n_estimators
     gc.collect()
 
