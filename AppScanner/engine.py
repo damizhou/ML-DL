@@ -542,7 +542,7 @@ def predict_disk_forest(
         prob_buffer_mb: Memory budget for auto sample batch size
         trees_per_batch: Number of trees to evaluate in parallel
         eval_strategy: 'auto', 'batch_first', or 'tree_first'
-        tree_first_max_prob_mb: Max full prob-buffer size for auto tree_first
+        tree_first_max_prob_mb: Max full prob-buffer size for tree_first
         tree_prefetch: Tree prefetch queue size for tree_first pipeline
         tree_eval_workers: Parallel tree workers in tree_first (shared merge)
         log_each_tree_time: Whether to log elapsed time for each tree (tree_first)
@@ -573,7 +573,10 @@ def predict_disk_forest(
         if not os.path.exists(p):
             raise FileNotFoundError(f"Missing tree file: {p}")
 
-    total_prob_mb = (n * n_classes * np.dtype(np.float32).itemsize) / (1024 ** 2)
+    bytes_per_value = np.dtype(np.float32).itemsize
+    full_prob_mb = (n * n_classes * bytes_per_value) / (1024 ** 2)
+    batch_prob_mb = (batch_size * n_classes * bytes_per_value) / (1024 ** 2)
+    tree_first_cap_mb = float(tree_first_max_prob_mb)
     strategy = str(eval_strategy).strip().lower()
     if strategy not in {"auto", "batch_first", "tree_first"}:
         raise ValueError(
@@ -581,13 +584,21 @@ def predict_disk_forest(
             f"['auto', 'batch_first', 'tree_first']"
         )
     if strategy == "auto":
-        strategy = "tree_first" if total_prob_mb <= float(tree_first_max_prob_mb) else "batch_first"
+        strategy = "tree_first" if full_prob_mb <= tree_first_cap_mb else "batch_first"
+    elif strategy == "tree_first" and full_prob_mb > tree_first_cap_mb:
+        log(
+            "  Requested eval_strategy=tree_first but full probability buffer "
+            f"needs ~{full_prob_mb:.1f}MB (> tree_first_max_prob_mb={tree_first_cap_mb:.1f}MB). "
+            "Falling back to batch_first to avoid OOM."
+        )
+        strategy = "batch_first"
 
     log(
         f"  Evaluating on {desc} ({n:,} samples) "
         f"[strategy={strategy}, batch_size={batch_size}, trees_per_batch={trees_per_batch}, "
         f"tree_prefetch={max(1, int(tree_prefetch))}, tree_eval_workers={max(1, int(tree_eval_workers))}, "
-        f"log_each_tree_time={bool(log_each_tree_time)}, soft-vote, prob_buffer~{total_prob_mb:.1f}MB]"
+        f"log_each_tree_time={bool(log_each_tree_time)}, soft-vote, "
+        f"batch_prob_buffer~{batch_prob_mb:.1f}MB, full_prob_buffer~{full_prob_mb:.1f}MB]"
     )
 
     if strategy == "tree_first":

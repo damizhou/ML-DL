@@ -119,17 +119,17 @@ class TrainArgs:
     n_estimators: int = 100  # 随机森林树数量。
     rf_max_depth: Optional[int] = 20  # 单棵树最大深度；None 表示不限制。
     rf_trees_per_batch: int = 25  # 训练阶段每批并行训练的树数（n_jobs）。
-    rf_val_trees_per_batch: Optional[int] = 10  # 评估 val 时 batch_first 路径的并行树数。
-    rf_test_trees_per_batch: Optional[int] = 10  # 评估 test 时 batch_first 路径的并行树数。
+    rf_val_trees_per_batch: Optional[int] = 5  # 评估 val 时 batch_first 路径的并行树数。
+    rf_test_trees_per_batch: Optional[int] = 5  # 评估 test 时 batch_first 路径的并行树数。
     rf_eval_batch_size: Optional[int] = None  # 评估样本批大小；None 按概率缓冲自动估算。
     rf_eval_prob_buffer_mb: int = 256  # 评估自动批大小的概率缓冲内存预算（MB）。
     rf_eval_strategy: str = 'tree_first'  # 评估策略：auto | batch_first | tree_first。
-    rf_tree_first_max_prob_mb: int = 4096  # auto 选择 tree_first 时允许的全量概率矩阵上限（MB）。
+    rf_tree_first_max_prob_mb: int = 4096  # tree_first 全量概率矩阵上限（MB）；超出时会回退到 batch_first。
     rf_tree_prefetch: int = 1  # tree_first 模式预加载队列长度（后台 I/O 预取树数）。
-    rf_tree_eval_workers: int = 10  # tree_first 每批并行评估树数（每组 10 棵并行评估）。
+    rf_tree_eval_workers: int = 5  # tree_first 每批并行评估树数（每组 10 棵并行评估）。
     rf_log_each_tree_time: bool = True  # 是否打印每棵树评估耗时。
     rf_combine_val_test: bool = True  # 是否将 val/test 合并一次推理后再切分结果。
-    rf_progress_tree_step: int = 4  # 训练阶段每隔多少棵树打印一次进度。
+    rf_progress_tree_step: int = 1  # 训练阶段每隔多少棵树打印一次进度。
 
     # Paths
     output_dir: str = './output'  # 输出目录（模型、日志、结果文件）。
@@ -151,23 +151,23 @@ class TrainArgs:
             self.rf_test_trees_per_batch = 10
         if self.features_paths is None:
             self.features_paths = [
-                # '/home/pcz/code/DL/AppScanner/data/vpn/vpn_appscanner.pkl',
+                '/home/pcz/code/DL/AppScanner/data/vpn/vpn_appscanner.pkl',
                 # '/home/pcz/code/DL/AppScanner/data/novpn/novpn_appscanner.pkl',
-                '/home/pcz/code/DL/AppScanner/data/novpn_top10/novpn_top10_appscanner.pkl',
-                '/home/pcz/code/DL/AppScanner/data/vpn_top10/vpn_top10_appscanner.pkl',
-                '/home/pcz/code/DL/AppScanner/data/novpn_top50/novpn_top50_appscanner.pkl',
-                '/home/pcz/code/DL/AppScanner/data/vpn_top50/vpn_top50_appscanner.pkl',
-                '/home/pcz/code/DL/AppScanner/data/novpn_top100/novpn_top100_appscanner.pkl',
-                '/home/pcz/code/DL/AppScanner/data/vpn_top100/vpn_top100_appscanner.pkl',
-                '/home/pcz/code/DL/AppScanner/data/novpn_top500/novpn_top500_appscanner.pkl',
-                '/home/pcz/code/DL/AppScanner/data/vpn_top500/vpn_top500_appscanner.pkl',
-                '/home/pcz/code/DL/AppScanner/data/novpn_top1000/novpn_top1000_appscanner.pkl',
-                '/home/pcz/code/DL/AppScanner/data/vpn_top1000/vpn_top1000_appscanner.pkl',
-                '/home/pcz/code/DL/AppScanner/data/ustc/ustc_appscanner.pkl',
-                '/home/pcz/code/DL/AppScanner/data/iscxvpn/iscxvpn_appscanner.pkl',
-                '/home/pcz/code/DL/AppScanner/data/iscxtor/iscxtor_appscanner.pkl',
-                '/home/pcz/code/DL/AppScanner/data/cross_platform/cross_platform_appscanner.pkl',
-                '/home/pcz/code/DL/AppScanner/data/cic_iot_2022/cic_iot_2022_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/novpn_top10/novpn_top10_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/vpn_top10/vpn_top10_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/novpn_top50/novpn_top50_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/vpn_top50/vpn_top50_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/novpn_top100/novpn_top100_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/vpn_top100/vpn_top100_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/novpn_top500/novpn_top500_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/vpn_top500/vpn_top500_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/novpn_top1000/novpn_top1000_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/vpn_top1000/vpn_top1000_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/ustc/ustc_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/iscxvpn/iscxvpn_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/iscxtor/iscxtor_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/cross_platform/cross_platform_appscanner.pkl',
+                # '/home/pcz/code/DL/AppScanner/data/cic_iot_2022/cic_iot_2022_appscanner.pkl',
             ]
 
 
