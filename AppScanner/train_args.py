@@ -12,10 +12,16 @@ import torch
 from config import AppScannerConfig, get_config
 
 
-def _default_rf_eval_parallelism() -> int:
-    """Choose a conservative evaluation parallelism from logical CPU count."""
+def _default_rf_batch_parallelism() -> int:
+    """Choose a higher parallelism for batch_first evaluation."""
     cpu_count = max(1, os.cpu_count() or 1)
-    return max(1, min(32, cpu_count, max(8, cpu_count // 4)))
+    return max(1, min(50, cpu_count, max(8, cpu_count // 2)))
+
+
+def _default_rf_tree_first_workers() -> int:
+    """Choose a lower worker count for tree_first to avoid memory-bandwidth stalls."""
+    cpu_count = max(1, os.cpu_count() or 1)
+    return max(1, min(16, cpu_count, max(4, cpu_count // 8)))
 
 
 @dataclass
@@ -79,15 +85,16 @@ class TrainArgs:
     num_workers: int = 4
 
     def __post_init__(self):
-        rf_eval_parallelism = _default_rf_eval_parallelism()
+        rf_batch_parallelism = _default_rf_batch_parallelism()
+        rf_tree_first_workers = _default_rf_tree_first_workers()
         if self.hidden_dims is None:
             self.hidden_dims = [256, 128, 64]
         if self.rf_val_trees_per_batch is None:
-            self.rf_val_trees_per_batch = rf_eval_parallelism
+            self.rf_val_trees_per_batch = rf_batch_parallelism
         if self.rf_test_trees_per_batch is None:
-            self.rf_test_trees_per_batch = rf_eval_parallelism
+            self.rf_test_trees_per_batch = rf_batch_parallelism
         if self.rf_tree_eval_workers is None:
-            self.rf_tree_eval_workers = rf_eval_parallelism
+            self.rf_tree_eval_workers = rf_tree_first_workers
         if self.features_paths is None:
             self.features_paths = [
                 '/home/pcz/code/DL/AppScanner/data/vpn/vpn_appscanner.pkl',

@@ -604,9 +604,8 @@ def predict_disk_forest(
         log(
             "  Requested eval_strategy=tree_first but full probability buffer "
             f"needs ~{full_prob_mb:.1f}MB (> tree_first_max_prob_mb={tree_first_cap_mb:.1f}MB). "
-            "Falling back to batch_first to avoid OOM."
+            "Proceeding with tree_first because it was explicitly requested."
         )
-        strategy = "batch_first"
 
     log(
         f"  Evaluating on {desc} ({n:,} samples) "
@@ -620,67 +619,82 @@ def predict_disk_forest(
         # Keep one full probability buffer in memory so each tree is loaded exactly once.
         all_probs = np.zeros((n, n_classes), dtype=np.float32)
         tree_progress_every = max(1, n_estimators // 20)
+        n_batches = (n + batch_size - 1) // batch_size
+        tree_batch_progress_every = max(1, n_batches // 10)
         prefetch = max(1, int(tree_prefetch))
         eval_workers = max(1, int(tree_eval_workers))
 
-        def _predict_loaded_tree_batch(tree, classes: np.ndarray, x_batch: np.ndarray):
-            t0 = time.time()
-            probs = tree.predict_proba(x_batch).astype(np.float32, copy=False)
-            return classes, probs, (time.time() - t0)
-
-        def _accumulate_tree_group(
-            tree_group: List[Tuple[int, Any, np.ndarray]]
+        def _accumulate_single_tree(
+            tree_idx: int,
+            tree: Any,
+            classes: np.ndarray,
         ) -> None:
-            elapsed_by_tree: Dict[int, float] = {idx: 0.0 for idx, _, _ in tree_group}
-            group_size = len(tree_group)
+            elapsed_total = 0.0
 
-            for start in range(0, n, batch_size):
-                end = min(start + batch_size, n)
+            def _predict_and_accumulate(start: int, end: int) -> Tuple[float, int]:
                 x_batch = X[start:end]
+                t0 = time.time()
+                tree_probs = tree.predict_proba(x_batch).astype(np.float32, copy=False)
+                all_probs[start:end, classes] += tree_probs
+                elapsed = time.time() - t0
+                del x_batch, tree_probs
+                return elapsed, end
 
-                if group_size == 1:
-                    tree_idx, tree, classes = tree_group[0]
-                    classes_out, tree_probs, elapsed = _predict_loaded_tree_batch(
-                        tree, classes, x_batch
-                    )
-                    all_probs[start:end, classes_out] += tree_probs
-                    elapsed_by_tree[tree_idx] += elapsed
-                    del classes_out, tree_probs
+            batch_ranges = [
+                (start, min(start + batch_size, n))
+                for start in range(0, n, batch_size)
+            ]
+
+            for batch_group_start in range(0, n_batches, eval_workers):
+                current_ranges = batch_ranges[
+                    batch_group_start:batch_group_start + eval_workers
+                ]
+                if len(current_ranges) == 1:
+                    elapsed, group_end = _predict_and_accumulate(*current_ranges[0])
+                    outputs = [(elapsed, group_end)]
                 else:
-                    outputs = Parallel(n_jobs=group_size, prefer="threads")(
-                        delayed(_predict_loaded_tree_batch)(tree, classes, x_batch)
-                        for _, tree, classes in tree_group
+                    outputs = Parallel(
+                        n_jobs=len(current_ranges),
+                        prefer="threads",
+                    )(
+                        delayed(_predict_and_accumulate)(start, end)
+                        for start, end in current_ranges
                     )
-                    for (tree_idx, _, _), (classes_out, tree_probs, elapsed) in zip(
-                        tree_group, outputs
-                    ):
-                        all_probs[start:end, classes_out] += tree_probs
-                        elapsed_by_tree[tree_idx] += elapsed
-                        del classes_out, tree_probs
-                    del outputs
 
-                del x_batch
-
-            for tree_idx, _, _ in tree_group:
-                if log_each_tree_time:
-                    log(
-                        f"    {desc} tree {tree_idx}/{n_estimators} elapsed: "
-                        f"{elapsed_by_tree[tree_idx]:.2f}s"
-                    )
+                elapsed_total += sum(elapsed for elapsed, _ in outputs)
+                batch_idx = batch_group_start + len(current_ranges)
+                group_end = current_ranges[-1][1]
                 if (
-                    tree_idx == 1
-                    or tree_idx % tree_progress_every == 0
-                    or tree_idx == n_estimators
+                    batch_group_start == 0
+                    or batch_idx % tree_batch_progress_every == 0
+                    or batch_idx == n_batches
                 ):
                     log(
-                        f"    {desc} progress: tree {tree_idx}/{n_estimators} "
-                        f"({100.0 * tree_idx / n_estimators:.1f}%)"
+                        f"    {desc} tree {tree_idx}/{n_estimators} batch "
+                        f"{batch_idx}/{n_batches} "
+                        f"({group_end:,}/{n:,} samples, {100.0 * group_end / n:.1f}%)"
                     )
+
+            if log_each_tree_time:
+                log(
+                    f"    {desc} tree {tree_idx}/{n_estimators} elapsed: "
+                    f"{elapsed_total:.2f}s"
+                )
+            if (
+                tree_idx == 1
+                or tree_idx % tree_progress_every == 0
+                or tree_idx == n_estimators
+            ):
+                log(
+                    f"    {desc} progress: tree {tree_idx}/{n_estimators} "
+                    f"({100.0 * tree_idx / n_estimators:.1f}%)"
+                )
 
         from queue import Queue
         from threading import Thread
 
-        queue_capacity = min(max(prefetch, eval_workers), n_estimators)
+        # Keep the queue aligned with tree_prefetch; buffered trees already hold the active group.
+        queue_capacity = min(prefetch, n_estimators)
         load_queue: Queue = Queue(maxsize=queue_capacity)
 
         def _loader():
@@ -703,7 +717,7 @@ def predict_disk_forest(
         buffered: List[Tuple[int, Any, np.ndarray]] = []
 
         while processed < n_estimators:
-            while len(buffered) < eval_workers and not done_seen:
+            while len(buffered) < prefetch and not done_seen:
                 msg, a, b, c = load_queue.get()
                 if msg == "error":
                     raise a
@@ -715,12 +729,10 @@ def predict_disk_forest(
             if not buffered:
                 break
 
-            tree_group = buffered[:eval_workers]
-            buffered = buffered[eval_workers:]
-            _accumulate_tree_group(tree_group)
-            processed += len(tree_group)
-            for _, tree, classes in tree_group:
-                del tree, classes
+            tree_idx, tree, classes = buffered.pop(0)
+            _accumulate_single_tree(tree_idx, tree, classes)
+            processed += 1
+            del tree, classes
             gc.collect()
 
         loader.join(timeout=1.0)
