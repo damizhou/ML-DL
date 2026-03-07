@@ -2,6 +2,7 @@
 Shared training/runtime arguments for AppScanner entry scripts.
 """
 
+import os
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -9,6 +10,12 @@ import numpy as np
 import torch
 
 from config import AppScannerConfig, get_config
+
+
+def _default_rf_eval_parallelism() -> int:
+    """Choose a conservative evaluation parallelism from logical CPU count."""
+    cpu_count = max(1, os.cpu_count() or 1)
+    return max(1, min(32, cpu_count, max(8, cpu_count // 4)))
 
 
 @dataclass
@@ -47,14 +54,14 @@ class TrainArgs:
     n_estimators: int = 100
     rf_max_depth: Optional[int] = 20
     rf_trees_per_batch: int = 25
-    rf_val_trees_per_batch: Optional[int] = 5
-    rf_test_trees_per_batch: Optional[int] = 5
+    rf_val_trees_per_batch: Optional[int] = None
+    rf_test_trees_per_batch: Optional[int] = None
     rf_eval_batch_size: Optional[int] = None
     rf_eval_prob_buffer_mb: int = 256
     rf_eval_strategy: str = 'tree_first'
     rf_tree_first_max_prob_mb: int = 4096
     rf_tree_prefetch: int = 1
-    rf_tree_eval_workers: int = 5
+    rf_tree_eval_workers: Optional[int] = None
     rf_log_each_tree_time: bool = True
     rf_combine_val_test: bool = True
     rf_progress_tree_step: int = 1
@@ -72,12 +79,15 @@ class TrainArgs:
     num_workers: int = 4
 
     def __post_init__(self):
+        rf_eval_parallelism = _default_rf_eval_parallelism()
         if self.hidden_dims is None:
             self.hidden_dims = [256, 128, 64]
         if self.rf_val_trees_per_batch is None:
-            self.rf_val_trees_per_batch = 10
+            self.rf_val_trees_per_batch = rf_eval_parallelism
         if self.rf_test_trees_per_batch is None:
-            self.rf_test_trees_per_batch = 10
+            self.rf_test_trees_per_batch = rf_eval_parallelism
+        if self.rf_tree_eval_workers is None:
+            self.rf_tree_eval_workers = rf_eval_parallelism
         if self.features_paths is None:
             self.features_paths = [
                 '/home/pcz/code/DL/AppScanner/data/vpn/vpn_appscanner.pkl',
