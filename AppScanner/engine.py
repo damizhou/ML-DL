@@ -81,6 +81,21 @@ def _get_process_memory_usage() -> Tuple[float, float]:
     return float("nan"), float("nan")
 
 
+def _trim_process_memory() -> None:
+    """Best-effort heap trim on glibc systems after large temporary allocations."""
+    try:
+        if os.name != "posix":
+            return
+        import ctypes
+
+        libc = ctypes.CDLL("libc.so.6")
+        malloc_trim = getattr(libc, "malloc_trim", None)
+        if malloc_trim is not None:
+            malloc_trim(0)
+    except Exception:
+        pass
+
+
 @dataclass
 class TrainingMetrics:
     """Training metrics container."""
@@ -782,6 +797,7 @@ def train_random_forest(
     save_dir: str = './output',
     seed: int = 42,
     compute_train_metrics: bool = True,
+    compute_feature_importance: bool = True,
     eval_batch_size: Optional[int] = None,
     eval_prob_buffer_mb: int = 256,
 ) -> Dict[str, Any]:
@@ -806,6 +822,7 @@ def train_random_forest(
         label_map: Label mapping for classification report (optional)
         save_dir: Directory to save tree files
         compute_train_metrics: Whether to evaluate full train set after fitting
+        compute_feature_importance: Whether to compute averaged tree feature importances
         eval_batch_size: Fixed evaluation batch size (None = auto)
         eval_prob_buffer_mb: Probability buffer memory budget for auto batch size
 
@@ -893,6 +910,7 @@ def train_random_forest(
 
         built = batch_end
         gc.collect()
+        _trim_process_memory()
 
         if progress_tree_step > 0 and (
             built % progress_tree_step == 0 or built == n_estimators
@@ -905,6 +923,7 @@ def train_random_forest(
 
     train_elapsed = time.time() - train_start
     log(f"Training complete: {n_estimators} trees in {train_elapsed:.1f}s")
+    _trim_process_memory()
 
     # --- Train metrics ---
     if compute_train_metrics:
@@ -995,21 +1014,29 @@ def train_random_forest(
         confidence_ratio = None
 
     # Feature importance (averaged across all trees)
-    log("Computing feature importance...")
-    importance = np.zeros(n_features)
-    for i in range(n_estimators):
-        tree = joblib.load(os.path.join(tree_dir, f'tree_{i:04d}.joblib'))
-        importance += tree.feature_importances_
-        del tree
-        if progress_tree_step > 0 and (
-            (i + 1) % progress_tree_step == 0 or (i + 1) == n_estimators
-        ):
-            log(f"  Feature importance: {i + 1}/{n_estimators}")
-    importance /= n_estimators
-    gc.collect()
+    importance = None
+    if compute_feature_importance:
+        log("Computing feature importance...")
+        _trim_process_memory()
+        importance = np.zeros(n_features, dtype=np.float64)
+        for i in range(n_estimators):
+            tree = joblib.load(os.path.join(tree_dir, f'tree_{i:04d}.joblib'))
+            importance += tree.feature_importances_
+            del tree
+            gc.collect()
+            _trim_process_memory()
+            if progress_tree_step > 0 and (
+                (i + 1) % progress_tree_step == 0 or (i + 1) == n_estimators
+            ):
+                log(f"  Feature importance: {i + 1}/{n_estimators}")
+        importance /= n_estimators
+        gc.collect()
+        _trim_process_memory()
 
-    top_features = np.argsort(importance)[::-1][:10]
-    log(f"Top 10 features: {top_features}")
+        top_features = np.argsort(importance)[::-1][:10]
+        log(f"Top 10 features: {top_features}")
+    else:
+        log("Skipping feature importance to reduce memory/time.")
 
     return {
         'tree_dir': tree_dir,

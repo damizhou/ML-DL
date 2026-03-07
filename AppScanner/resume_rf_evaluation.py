@@ -24,6 +24,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from data import load_dataset
 from engine import predict_disk_forest
+from train_args import create_config_from_args, get_args
 
 
 # =============================================================================
@@ -36,6 +37,10 @@ def setup_logging(output_dir: str) -> str:
 
     log_filename = f"resume_eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     log_path = os.path.join(output_dir, log_filename)
+    log_formatter = logging.Formatter(
+        '[%(asctime)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+    )
 
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
@@ -43,11 +48,11 @@ def setup_logging(output_dir: str) -> str:
 
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
     file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(logging.Formatter("%(message)s"))
+    file_handler.setFormatter(log_formatter)
 
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(logging.Formatter("%(message)s"))
+    console_handler.setFormatter(log_formatter)
 
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
@@ -60,27 +65,34 @@ def log(message: str = "") -> None:
     logging.info(message)
 
 
-# =============================================================================
-# Configuration (edit these values directly)
-# =============================================================================
+DEFAULT_OUTPUT_JSON_NAME = "resume_eval_metrics.json"
 
-DATA_PATH = "/home/pcz/code/DL/AppScanner/data/novpn/novpn_appscanner.pkl"
-TREE_DIR = "/home/pcz/code/DL/AppScanner/output/novpn/rf_trees"
-SEED = 42  # 随机种子：用于可复现的数据划分（train/val/test）。
-TRAIN_RATIO = 0.8  # 训练集比例：总样本中划给训练集的占比。
-VAL_RATIO = 0.1  # 验证集比例：总样本中划给验证集的占比。
-THRESHOLD = 0.9  # 置信度阈值：高于该概率的预测计入 confidence_accuracy。
-VAL_TREES_PER_BATCH = 10  # 验证集评估时 batch_first 的并行树数（与 tree_eval_workers 对齐）。
-TEST_TREES_PER_BATCH = 10  # 测试集评估时 batch_first 的并行树数（与 tree_eval_workers 对齐）。
-EVAL_BATCH_SIZE = None  # 样本批大小：None 表示按 PROB_BUFFER_MB 自动估算。
-PROB_BUFFER_MB = 256  # 自动批大小的概率缓冲预算（MB），控制每批内存占用。
-EVAL_STRATEGY = "tree_first"  # 评估策略：固定 tree_first（树外层，一次加载整棵树）。
-TREE_FIRST_MAX_PROB_MB = 4096  # tree_first 全量概率矩阵上限：超出该值会自动回退到 batch_first。
-TREE_PREFETCH = 1  # tree_first 预加载队列长度：评估当前树时后台预加载后续树（如 25）。
-TREE_EVAL_WORKERS = 10  # tree_first 评估并行树数（每批最多同时计算 K 棵树）。
-LOG_EACH_TREE_TIME = True  # 是否打印每棵树的评估耗时（tree_first 模式）。
-COMBINE_VAL_TEST = True
-OUTPUT_JSON = "/home/pcz/code/DL/AppScanner/output/novpn/resume_eval_metrics.json"
+
+def _dataset_name(data_path: str) -> str:
+    return Path(data_path).stem.replace("_appscanner", "")
+
+
+def _build_run_specs() -> Tuple[Any, Any, List[Dict[str, str]]]:
+    """Reuse the shared train/runtime defaults so resume-eval stays in sync."""
+    args = get_args()
+    config = create_config_from_args(args)
+    base_output_dir = Path(config.output_dir)
+    run_specs: List[Dict[str, str]] = []
+
+    for data_path in args.features_paths:
+        dataset_name = _dataset_name(data_path)
+        dataset_output_dir = base_output_dir / dataset_name
+        run_specs.append(
+            {
+                "dataset_name": dataset_name,
+                "data_path": data_path,
+                "output_dir": str(dataset_output_dir),
+                "tree_dir": str(dataset_output_dir / "rf_trees"),
+                "output_json": str(dataset_output_dir / DEFAULT_OUTPUT_JSON_NAME),
+            }
+        )
+
+    return args, config, run_specs
 
 
 def _find_tree_indices(tree_dir: str) -> List[int]:
@@ -287,85 +299,136 @@ def evaluate_saved_forest_splits(
 
 
 def main() -> None:
-    if OUTPUT_JSON:
-        log_output_dir = str(Path(OUTPUT_JSON).resolve().parent)
-    else:
-        log_output_dir = str(Path(TREE_DIR).resolve().parent)
-    log_path = setup_logging(log_output_dir)
+    start_time = datetime.now()
+    args, config, run_specs = _build_run_specs()
 
-    log("=" * 60)
-    log("AppScanner Resume RF Evaluation")
-    log("=" * 60)
-    log(f"Log file: {log_path}")
+    for i, run in enumerate(run_specs, start=1):
+        dataset_start = datetime.now()
+        log_path = setup_logging(run["output_dir"])
 
-    n_estimators = _validate_trees(TREE_DIR)
+        log(f"\n{'=' * 70}")
+        log(f"[{i}/{len(run_specs)}] Dataset: {run['dataset_name']}")
+        log(f"{'=' * 70}")
+        log("Configuration:")
+        log(f"  Start time: {dataset_start.strftime('%Y-%m-%d %H:%M:%S')}")
+        log(f"  Data: {run['data_path']}")
+        log(f"  Tree dir: {run['tree_dir']}")
+        log(f"  Output dir: {run['output_dir']}")
+        log(f"  Seed: {config.seed}")
+        log(f"  Train ratio: {config.train_ratio}")
+        log(f"  Val ratio: {config.val_ratio}")
+        log(f"  Test ratio: {config.test_ratio}")
+        log(f"  Prediction threshold: {config.prediction_threshold}")
+        log(f"  RF val trees_per_batch: {args.rf_val_trees_per_batch}")
+        log(f"  RF test trees_per_batch: {args.rf_test_trees_per_batch}")
+        log(f"  RF eval batch_size: {args.rf_eval_batch_size}")
+        log(f"  RF eval prob_buffer_mb: {args.rf_eval_prob_buffer_mb}")
+        log(f"  RF eval strategy: {args.rf_eval_strategy}")
+        log(f"  RF tree_first max_prob_mb: {args.rf_tree_first_max_prob_mb}")
+        log(f"  RF tree prefetch: {args.rf_tree_prefetch}")
+        log(f"  RF tree eval workers: {args.rf_tree_eval_workers}")
+        log(f"  RF log each tree time: {args.rf_log_each_tree_time}")
+        log(f"  RF combine val+test: {args.rf_combine_val_test}")
+        log(f"  Metrics JSON: {run['output_json']}")
+        log(f"  Log file: {log_path}")
 
-    log(f"Loading dataset: {DATA_PATH}")
-    features, labels, label_map = load_dataset(DATA_PATH)
-    n_samples = len(labels)
-    n_classes = _label_map_num_classes(label_map, labels)
-    log(f"Dataset shape: {features.shape}, classes: {n_classes}, trees: {n_estimators}")
+        try:
+            n_estimators = _validate_trees(run["tree_dir"])
 
-    np.random.seed(SEED)
-    indices = np.random.permutation(n_samples)
-    n_train = int(n_samples * TRAIN_RATIO)
-    n_val = int(n_samples * VAL_RATIO)
+            log(f"Loading dataset: {run['data_path']}")
+            features, labels, label_map = load_dataset(run["data_path"])
+            n_samples = len(labels)
+            n_classes = _label_map_num_classes(label_map, labels)
+            log(f"Dataset shape: {features.shape}, classes: {n_classes}, trees: {n_estimators}")
 
-    train_idx = indices[:n_train]
-    val_idx = indices[n_train : n_train + n_val]
-    test_idx = indices[n_train + n_val :]
-    log(f"Training samples: {len(train_idx)}")
-    log(f"Validation samples: {len(val_idx)}")
-    log(f"Test samples: {len(test_idx)}")
+            np.random.seed(config.seed)
+            indices = np.random.permutation(n_samples)
+            n_train = int(n_samples * config.train_ratio)
+            n_val = int(n_samples * config.val_ratio)
 
-    results = {
-        "n_estimators_used": n_estimators,
-        "n_samples": int(n_samples),
-        "n_classes": int(n_classes),
-        "seed": int(SEED),
-        "train_ratio": float(TRAIN_RATIO),
-        "val_ratio": float(VAL_RATIO),
-        "test_ratio": float(1.0 - TRAIN_RATIO - VAL_RATIO),
-        "threshold": float(THRESHOLD),
-        "eval_strategy": str(EVAL_STRATEGY),
-        "tree_first_max_prob_mb": int(TREE_FIRST_MAX_PROB_MB),
-        "tree_prefetch": int(TREE_PREFETCH),
-        "tree_eval_workers": int(TREE_EVAL_WORKERS),
-        "log_each_tree_time": bool(LOG_EACH_TREE_TIME),
-        "combine_val_test": bool(COMBINE_VAL_TEST),
-        "val_trees_per_batch": int(VAL_TREES_PER_BATCH),
-        "test_trees_per_batch": int(TEST_TREES_PER_BATCH),
-        "log_file": str(log_path),
-    }
-    eval_results = evaluate_saved_forest_splits(
-        features,
-        labels,
-        val_idx=val_idx,
-        test_idx=test_idx,
-        tree_dir=TREE_DIR,
-        n_estimators=n_estimators,
-        n_classes=n_classes,
-        threshold=THRESHOLD,
-        eval_batch_size=EVAL_BATCH_SIZE,
-        prob_buffer_mb=PROB_BUFFER_MB,
-        val_trees_per_batch=VAL_TREES_PER_BATCH,
-        test_trees_per_batch=TEST_TREES_PER_BATCH,
-        eval_strategy=EVAL_STRATEGY,
-        tree_first_max_prob_mb=TREE_FIRST_MAX_PROB_MB,
-        tree_prefetch=TREE_PREFETCH,
-        tree_eval_workers=TREE_EVAL_WORKERS,
-        log_each_tree_time=LOG_EACH_TREE_TIME,
-        combine_val_test=COMBINE_VAL_TEST,
-        label_map=label_map,
-        logger=log,
-    )
-    results.update(eval_results)
+            train_idx = indices[:n_train]
+            val_idx = indices[n_train:n_train + n_val]
+            test_idx = indices[n_train + n_val:]
+            log(f"Training samples: {len(train_idx)}")
+            log(f"Validation samples: {len(val_idx)}")
+            log(f"Test samples: {len(test_idx)}")
 
-    if OUTPUT_JSON:
-        out_path = Path(OUTPUT_JSON)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
-        log(f"Saved metrics JSON: {out_path}")
+            results = {
+                "dataset_name": run["dataset_name"],
+                "data_path": run["data_path"],
+                "tree_dir": run["tree_dir"],
+                "n_estimators_used": n_estimators,
+                "n_samples": int(n_samples),
+                "n_classes": int(n_classes),
+                "seed": int(config.seed),
+                "train_ratio": float(config.train_ratio),
+                "val_ratio": float(config.val_ratio),
+                "test_ratio": float(config.test_ratio),
+                "threshold": float(config.prediction_threshold),
+                "eval_strategy": str(args.rf_eval_strategy),
+                "tree_first_max_prob_mb": int(args.rf_tree_first_max_prob_mb),
+                "tree_prefetch": int(args.rf_tree_prefetch),
+                "tree_eval_workers": int(args.rf_tree_eval_workers),
+                "log_each_tree_time": bool(args.rf_log_each_tree_time),
+                "combine_val_test": bool(args.rf_combine_val_test),
+                "val_trees_per_batch": int(args.rf_val_trees_per_batch),
+                "test_trees_per_batch": int(args.rf_test_trees_per_batch),
+                "eval_batch_size": (
+                    None if args.rf_eval_batch_size is None else int(args.rf_eval_batch_size)
+                ),
+                "eval_prob_buffer_mb": int(args.rf_eval_prob_buffer_mb),
+                "metrics_json": run["output_json"],
+                "log_file": str(log_path),
+            }
+            eval_results = evaluate_saved_forest_splits(
+                features,
+                labels,
+                val_idx=val_idx,
+                test_idx=test_idx,
+                tree_dir=run["tree_dir"],
+                n_estimators=n_estimators,
+                n_classes=n_classes,
+                threshold=config.prediction_threshold,
+                eval_batch_size=args.rf_eval_batch_size,
+                prob_buffer_mb=args.rf_eval_prob_buffer_mb,
+                val_trees_per_batch=args.rf_val_trees_per_batch,
+                test_trees_per_batch=args.rf_test_trees_per_batch,
+                eval_strategy=args.rf_eval_strategy,
+                tree_first_max_prob_mb=args.rf_tree_first_max_prob_mb,
+                tree_prefetch=args.rf_tree_prefetch,
+                tree_eval_workers=args.rf_tree_eval_workers,
+                log_each_tree_time=args.rf_log_each_tree_time,
+                combine_val_test=args.rf_combine_val_test,
+                label_map=label_map,
+                logger=log,
+            )
+            results.update(eval_results)
+
+            out_path = Path(run["output_json"])
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+            log(f"Saved metrics JSON: {out_path}")
+
+            dataset_end = datetime.now()
+            elapsed = dataset_end - dataset_start
+            h, rem = divmod(int(elapsed.total_seconds()), 3600)
+            m, s = divmod(rem, 60)
+            log(f"\n[{run['dataset_name']}] Completed in {h:02d}:{m:02d}:{s:02d}")
+        except Exception as e:
+            log(f"\n[{run['dataset_name']}] FAILED: {e}")
+            import traceback
+
+            log(traceback.format_exc())
+
+    end_time = datetime.now()
+    elapsed = end_time - start_time
+    h, rem = divmod(int(elapsed.total_seconds()), 3600)
+    m, s = divmod(rem, 60)
+    log()
+    log("=" * 70)
+    log(f"All {len(run_specs)} datasets completed.")
+    log(f"Total time: {h:02d}:{m:02d}:{s:02d}")
+    log("=" * 70)
 
 
 if __name__ == "__main__":
