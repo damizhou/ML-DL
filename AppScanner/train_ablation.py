@@ -38,11 +38,8 @@ from pathlib import Path
 from typing import Any, Dict, Tuple
 
 import numpy as np
-import torch
 
-from data import create_dataloaders_from_split
-from engine import test, train, train_random_forest
-from models import AppScannerDeep, AppScannerNN
+from engine import train_random_forest
 from resume_rf_evaluation import evaluate_saved_forest_splits
 from train_args import TrainArgs, create_config_from_args, set_seed
 
@@ -521,6 +518,12 @@ def run_neural_training(
     experiment_data: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Run NN/Deep training using the shared `train_with_dataset.py` logic."""
+    import torch
+
+    from data import create_dataloaders_from_split
+    from engine import test, train
+    from models import AppScannerDeep, AppScannerNN
+
     train_data = experiment_data["train_data"]
     val_data = experiment_data["val_data"]
     test_data = experiment_data["test_data"]
@@ -671,12 +674,15 @@ def run_random_forest_training(
         eval_labels,
         val_idx=val_idx,
         test_idx=test_idx,
+        train_features=train_features,
+        train_labels=train_labels,
         tree_dir=results["tree_dir"],
         n_estimators=results["n_estimators"],
         n_classes=results["n_classes"],
         threshold=config.prediction_threshold,
         eval_batch_size=args.rf_eval_batch_size,
         prob_buffer_mb=args.rf_eval_prob_buffer_mb,
+        train_trees_per_batch=args.rf_val_trees_per_batch,
         val_trees_per_batch=args.rf_val_trees_per_batch,
         test_trees_per_batch=args.rf_test_trees_per_batch,
         eval_strategy=args.rf_eval_strategy,

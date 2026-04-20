@@ -15,7 +15,16 @@ Key Paper Parameters:
 
 from dataclasses import dataclass, field
 from typing import List, Optional
-import torch
+try:
+    import torch
+except ImportError:
+    class _TorchPlaceholder:
+        class cuda:
+            @staticmethod
+            def is_available() -> bool:
+                return False
+
+    torch = _TorchPlaceholder()
 
 
 @dataclass

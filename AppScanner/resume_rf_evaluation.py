@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
-from sklearn.metrics import accuracy_score, classification_report, f1_score
+from sklearn.metrics import accuracy_score, classification_report
 
 
 # Ensure local AppScanner modules are importable when invoked from any directory.
@@ -22,8 +22,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from data import load_dataset
-from engine import predict_disk_forest
+from engine import RF_F1_AVERAGE, compute_accuracy_and_macro_f1, predict_disk_forest
 from train_args import create_config_from_args, get_args
 
 
@@ -159,12 +158,15 @@ def evaluate_saved_forest_splits(
     *,
     val_idx: np.ndarray,
     test_idx: np.ndarray,
+    train_features: Optional[np.ndarray] = None,
+    train_labels: Optional[np.ndarray] = None,
     tree_dir: str,
     n_estimators: int,
     n_classes: int,
     threshold: float,
     eval_batch_size: Optional[int] = None,
     prob_buffer_mb: int = 256,
+    train_trees_per_batch: Optional[int] = None,
     val_trees_per_batch: int = 10,
     test_trees_per_batch: int = 10,
     eval_strategy: str = "tree_first",
@@ -176,18 +178,54 @@ def evaluate_saved_forest_splits(
     label_map: Optional[Dict] = None,
     logger: Callable[[str], None] = print,
 ) -> Dict[str, Any]:
-    """Evaluate saved RF trees on val/test splits using shared logic."""
-    if features.dtype != np.float32:
-        logger(f"Casting features to float32 from {features.dtype} for faster RF inference...")
-        features = features.astype(np.float32, copy=False)
-    if not features.flags.c_contiguous:
-        features = np.ascontiguousarray(features)
+    """Evaluate saved RF trees on train/val/test splits using shared logic."""
 
-    results: Dict[str, Any] = {}
+    def _prepare_features(split_features: np.ndarray, split_name: str) -> np.ndarray:
+        if split_features.dtype != np.float32:
+            logger(
+                f"Casting {split_name} features to float32 from "
+                f"{split_features.dtype} for faster RF inference..."
+            )
+            split_features = split_features.astype(np.float32, copy=False)
+        if not split_features.flags.c_contiguous:
+            split_features = np.ascontiguousarray(split_features)
+        return split_features
+
+    features = _prepare_features(features, "eval")
+    if train_features is not None:
+        train_features = _prepare_features(train_features, "train")
+
+    results: Dict[str, Any] = {"f1_average": RF_F1_AVERAGE}
     has_val = len(val_idx) > 0
     X_test, y_test = features[test_idx], labels[test_idx]
     test_preds = None
     test_conf = None
+    effective_train_trees_per_batch = (
+        val_trees_per_batch if train_trees_per_batch is None else train_trees_per_batch
+    )
+
+    if train_features is not None and train_labels is not None:
+        train_preds, _ = predict_disk_forest(
+            train_features,
+            tree_dir=tree_dir,
+            n_estimators=n_estimators,
+            n_classes=n_classes,
+            batch_size=eval_batch_size,
+            prob_buffer_mb=prob_buffer_mb,
+            trees_per_batch=effective_train_trees_per_batch,
+            eval_strategy=eval_strategy,
+            tree_first_max_prob_mb=tree_first_max_prob_mb,
+            tree_prefetch=tree_prefetch,
+            tree_eval_workers=tree_eval_workers,
+            log_each_tree_time=log_each_tree_time,
+            desc="train set",
+        )
+        train_acc, train_f1 = compute_accuracy_and_macro_f1(train_labels, train_preds)
+        logger(f"Train Accuracy: {train_acc:.4f}")
+        logger(f"Train Macro-F1: {train_f1:.4f}")
+        results["train_accuracy"] = float(train_acc)
+        results["train_f1"] = float(train_f1)
+        results["train_macro_f1"] = float(train_f1)
 
     if has_val and combine_val_test:
         X_val, y_val = features[val_idx], labels[val_idx]
@@ -214,12 +252,12 @@ def evaluate_saved_forest_splits(
         test_conf = eval_conf[val_size:]
         del X_eval, eval_preds, eval_conf
 
-        val_acc = accuracy_score(y_val, val_preds)
-        val_f1 = f1_score(y_val, val_preds, average="weighted", zero_division=0)
+        val_acc, val_f1 = compute_accuracy_and_macro_f1(y_val, val_preds)
         logger(f"Val Accuracy: {val_acc:.4f}")
-        logger(f"Val F1 (weighted): {val_f1:.4f}")
+        logger(f"Val Macro-F1: {val_f1:.4f}")
         results["val_accuracy"] = float(val_acc)
         results["val_f1"] = float(val_f1)
+        results["val_macro_f1"] = float(val_f1)
     elif has_val:
         X_val, y_val = features[val_idx], labels[val_idx]
         val_preds, _ = predict_disk_forest(
@@ -237,12 +275,12 @@ def evaluate_saved_forest_splits(
             log_each_tree_time=log_each_tree_time,
             desc="val set",
         )
-        val_acc = accuracy_score(y_val, val_preds)
-        val_f1 = f1_score(y_val, val_preds, average="weighted", zero_division=0)
+        val_acc, val_f1 = compute_accuracy_and_macro_f1(y_val, val_preds)
         logger(f"Val Accuracy: {val_acc:.4f}")
-        logger(f"Val F1 (weighted): {val_f1:.4f}")
+        logger(f"Val Macro-F1: {val_f1:.4f}")
         results["val_accuracy"] = float(val_acc)
         results["val_f1"] = float(val_f1)
+        results["val_macro_f1"] = float(val_f1)
     else:
         logger("Validation split is empty; skipping val evaluation.")
 
@@ -262,10 +300,13 @@ def evaluate_saved_forest_splits(
             log_each_tree_time=log_each_tree_time,
             desc="test set",
         )
-    test_acc = accuracy_score(y_test, test_preds)
-    test_f1 = f1_score(y_test, test_preds, average="weighted", zero_division=0)
+    test_acc, test_f1 = compute_accuracy_and_macro_f1(y_test, test_preds)
     results["test_accuracy"] = float(test_acc)
     results["test_f1"] = float(test_f1)
+    results["test_macro_f1"] = float(test_f1)
+    results["accuracy"] = float(test_acc)
+    results["f1"] = float(test_f1)
+    results["macro_f1"] = float(test_f1)
 
     confident_mask = test_conf >= threshold
     results["confidence_ratio"] = float(confident_mask.mean())
@@ -277,7 +318,7 @@ def evaluate_saved_forest_splits(
         results["confidence_accuracy"] = 0.0
 
     logger(f"Test Accuracy: {results['test_accuracy']:.4f}")
-    logger(f"Test F1 (weighted): {results['test_f1']:.4f}")
+    logger(f"Test Macro-F1: {results['test_f1']:.4f}")
     logger(
         "Confidence Accuracy: "
         f"{results['confidence_accuracy']:.4f} ({results['confidence_ratio']:.1%})"
@@ -336,6 +377,8 @@ def main() -> None:
             n_estimators = _validate_trees(run["tree_dir"])
 
             log(f"Loading dataset: {run['data_path']}")
+            from data import load_dataset
+
             features, labels, label_map = load_dataset(run["data_path"])
             n_samples = len(labels)
             n_classes = _label_map_num_classes(label_map, labels)

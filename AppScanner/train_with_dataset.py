@@ -86,6 +86,7 @@ from data import (
     load_dataset,
 )
 from engine import (
+    RF_F1_AVERAGE,
     train,
     test,
     train_random_forest,
@@ -131,6 +132,12 @@ def mode_train(args, config):
 
     if args.model_type == 'rf':
         # --- Random Forest branch (memory-optimized) ---
+        if RF_F1_AVERAGE != "macro":
+            raise RuntimeError(
+                f"Random Forest F1 average must be 'macro', got {RF_F1_AVERAGE!r}. "
+                "Refusing to run because weighted-F1 cannot be used for Table 5-2."
+            )
+
         log(f"\nModel: rf (n_estimators={config.n_estimators}, max_depth={args.rf_max_depth})")
         log(f"RF train trees_per_batch: {args.rf_trees_per_batch}")
         log(f"RF val trees_per_batch: {args.rf_val_trees_per_batch}")
@@ -181,10 +188,16 @@ def mode_train(args, config):
             label_map=label_map,
             save_dir=config.output_dir,
             seed=config.seed,
-            compute_train_metrics=False,
+            compute_train_metrics=True,
             compute_feature_importance=args.rf_compute_feature_importance,
             eval_batch_size=args.rf_eval_batch_size,
             eval_prob_buffer_mb=args.rf_eval_prob_buffer_mb,
+            train_trees_per_batch=args.rf_val_trees_per_batch,
+            eval_strategy=args.rf_eval_strategy,
+            tree_first_max_prob_mb=args.rf_tree_first_max_prob_mb,
+            tree_prefetch=args.rf_tree_prefetch,
+            tree_eval_workers=args.rf_tree_eval_workers,
+            log_each_tree_time=args.rf_log_each_tree_time,
         )
 
         # Release training data
@@ -206,6 +219,7 @@ def mode_train(args, config):
         results['rf_tree_eval_workers'] = args.rf_tree_eval_workers
         results['rf_log_each_tree_time'] = args.rf_log_each_tree_time
         results['rf_combine_val_test'] = args.rf_combine_val_test
+        results['rf_train_trees_per_batch'] = args.rf_val_trees_per_batch
         results['rf_val_trees_per_batch'] = args.rf_val_trees_per_batch
         results['rf_test_trees_per_batch'] = args.rf_test_trees_per_batch
         eval_results = evaluate_saved_forest_splits(

@@ -7,21 +7,65 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 import numpy as np
-import torch
+try:
+    import torch
+
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+
+    class _TorchPlaceholder:
+        class cuda:
+            @staticmethod
+            def is_available() -> bool:
+                return False
+
+            @staticmethod
+            def manual_seed_all(seed: int) -> None:
+                return None
+
+        @staticmethod
+        def manual_seed(seed: int) -> None:
+            return None
+
+    torch = _TorchPlaceholder()
 
 from config import AppScannerConfig, get_config
 
 
-def _default_rf_batch_parallelism() -> int:
-    """Choose a higher parallelism for batch_first evaluation."""
-    cpu_count = max(1, os.cpu_count() or 1)
-    return max(1, min(50, cpu_count, max(8, cpu_count // 2)))
+RF_MEMORY_BUDGET_MB = 360 * 1024
+RF_EVAL_PROB_BUFFER_MB = 512
 
 
-def _default_rf_tree_first_workers() -> int:
-    """Choose a lower worker count for tree_first to avoid memory-bandwidth stalls."""
+def _largest_divisor_at_most(total: int, limit: int) -> int:
+    """Return the largest divisor of total that does not exceed limit."""
+    total = max(1, int(total))
+    limit = max(1, min(int(limit), total))
+    for candidate in range(limit, 0, -1):
+        if total % candidate == 0:
+            return candidate
+    return 1
+
+
+def _default_rf_fit_trees_per_batch(n_estimators: int) -> int:
+    """Use an even tree batch near half the CPU count to avoid a weak tail batch."""
     cpu_count = max(1, os.cpu_count() or 1)
-    return max(1, min(16, cpu_count, max(4, cpu_count // 8)))
+    limit = min(cpu_count, max(8, cpu_count // 2), n_estimators)
+    return _largest_divisor_at_most(n_estimators, limit)
+
+
+def _default_rf_eval_trees_per_batch(n_estimators: int) -> int:
+    """Evaluate an even tree batch, up to all trees, for high CPU utilization."""
+    cpu_count = max(1, os.cpu_count() or 1)
+    limit = min(cpu_count, n_estimators)
+    return _largest_divisor_at_most(n_estimators, limit)
+
+
+def _default_rf_tree_first_workers(n_estimators: int) -> int:
+    """Use an even worker count for high tree_first CPU utilization."""
+    cpu_count = max(1, os.cpu_count() or 1)
+    limit = min(cpu_count, n_estimators)
+    return _largest_divisor_at_most(n_estimators, limit)
 
 
 @dataclass
@@ -59,13 +103,13 @@ class TrainArgs:
     # Random Forest
     n_estimators: int = 100
     rf_max_depth: Optional[int] = 20
-    rf_trees_per_batch: int = 25
+    rf_trees_per_batch: Optional[int] = None
     rf_val_trees_per_batch: Optional[int] = None
     rf_test_trees_per_batch: Optional[int] = None
     rf_eval_batch_size: Optional[int] = None
-    rf_eval_prob_buffer_mb: int = 256
-    rf_eval_strategy: str = 'tree_first'
-    rf_tree_first_max_prob_mb: int = 4096
+    rf_eval_prob_buffer_mb: int = RF_EVAL_PROB_BUFFER_MB
+    rf_eval_strategy: str = 'auto'
+    rf_tree_first_max_prob_mb: int = RF_MEMORY_BUDGET_MB
     rf_tree_prefetch: int = 1
     rf_tree_eval_workers: Optional[int] = None
     rf_log_each_tree_time: bool = True
@@ -85,14 +129,17 @@ class TrainArgs:
     num_workers: int = 4
 
     def __post_init__(self):
-        rf_batch_parallelism = _default_rf_batch_parallelism()
-        rf_tree_first_workers = _default_rf_tree_first_workers()
+        rf_fit_trees_per_batch = _default_rf_fit_trees_per_batch(self.n_estimators)
+        rf_eval_trees_per_batch = _default_rf_eval_trees_per_batch(self.n_estimators)
+        rf_tree_first_workers = _default_rf_tree_first_workers(self.n_estimators)
         if self.hidden_dims is None:
             self.hidden_dims = [256, 128, 64]
+        if self.rf_trees_per_batch is None:
+            self.rf_trees_per_batch = rf_fit_trees_per_batch
         if self.rf_val_trees_per_batch is None:
-            self.rf_val_trees_per_batch = rf_batch_parallelism
+            self.rf_val_trees_per_batch = rf_eval_trees_per_batch
         if self.rf_test_trees_per_batch is None:
-            self.rf_test_trees_per_batch = rf_batch_parallelism
+            self.rf_test_trees_per_batch = rf_eval_trees_per_batch
         if self.rf_tree_eval_workers is None:
             self.rf_tree_eval_workers = rf_tree_first_workers
         if self.features_paths is None:
@@ -140,7 +187,8 @@ def get_args() -> TrainArgs:
 def set_seed(seed: int):
     """Set random seed for reproducibility."""
     np.random.seed(seed)
-    torch.manual_seed(seed)
+    if TORCH_AVAILABLE:
+        torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 

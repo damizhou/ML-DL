@@ -12,10 +12,6 @@ import time
 import gc
 import logging
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
 from typing import Dict, Optional, Tuple, List, Any
 from dataclasses import dataclass
 from sklearn.metrics import (
@@ -27,10 +23,70 @@ from sklearn.metrics import (
     classification_report,
 )
 
+try:
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    from torch.utils.data import DataLoader
+
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+
+    class _TorchPlaceholder:
+        class optim:
+            class Optimizer:
+                pass
+
+            class lr_scheduler:
+                class _LRScheduler:
+                    pass
+
+        class device:
+            pass
+
+        @staticmethod
+        def no_grad():
+            def decorator(func):
+                return func
+
+            return decorator
+
+    class _NNPlaceholder:
+        Module = object
+
+    torch = _TorchPlaceholder()
+    nn = _NNPlaceholder()
+    F = None
+    DataLoader = Any
+
 
 def log(message: str = ""):
     """Log message using configured logger."""
     logging.info(message)
+
+
+RF_F1_AVERAGE = "macro"
+RF_TREE_PROBA_PEAK_FACTOR = 3.0
+
+
+def compute_accuracy_and_macro_f1(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+) -> Tuple[float, float]:
+    """Return accuracy and Macro-F1 for Random Forest evaluation."""
+    accuracy = accuracy_score(y_true, y_pred)
+    macro_f1 = f1_score(y_true, y_pred, average=RF_F1_AVERAGE, zero_division=0)
+    return accuracy, macro_f1
+
+
+def _require_torch() -> None:
+    """Raise a clear error when a neural-network workflow lacks PyTorch."""
+    if not TORCH_AVAILABLE:
+        raise ImportError(
+            "PyTorch is required for AppScanner neural-network training/evaluation, "
+            "but it is not installed in the current interpreter."
+        )
 
 
 def _get_process_memory_usage() -> Tuple[float, float]:
@@ -177,6 +233,7 @@ def train_one_epoch(
     Returns:
         Training metrics
     """
+    _require_torch()
     model.train()
 
     total_loss = 0.0
@@ -238,6 +295,7 @@ def evaluate(
     Returns:
         Evaluation metrics
     """
+    _require_torch()
     model.eval()
 
     all_predictions = []
@@ -321,6 +379,7 @@ def train(
     Returns:
         Trained model and training history
     """
+    _require_torch()
     os.makedirs(save_dir, exist_ok=True)
 
     device = torch.device(config.device)
@@ -444,6 +503,7 @@ def test(
     Returns:
         Evaluation metrics
     """
+    _require_torch()
     model.eval()
 
     all_predictions = []
@@ -528,6 +588,21 @@ def _auto_eval_batch_size(
     return max(1, min(max_batch_size, int(batch_size)))
 
 
+def _accumulate_tree_probs(
+    dst_probs: np.ndarray,
+    classes: np.ndarray,
+    tree_probs: np.ndarray,
+) -> None:
+    """Accumulate one tree's probabilities while avoiding fancy-index copies when possible."""
+    if len(classes) == dst_probs.shape[1] and np.array_equal(
+        classes,
+        np.arange(dst_probs.shape[1]),
+    ):
+        dst_probs += tree_probs
+    else:
+        dst_probs[:, classes] += tree_probs
+
+
 def predict_disk_forest(
     X: np.ndarray,
     tree_dir: str,
@@ -557,7 +632,7 @@ def predict_disk_forest(
         prob_buffer_mb: Memory budget for auto sample batch size
         trees_per_batch: Number of trees to evaluate in parallel
         eval_strategy: 'auto', 'batch_first', or 'tree_first'
-        tree_first_max_prob_mb: Max full prob-buffer size for tree_first
+        tree_first_max_prob_mb: Max in-memory full prob-buffer size allowed for tree_first
         tree_prefetch: Tree prefetch queue size for tree_first pipeline
         tree_eval_workers: Parallel tree workers in tree_first (shared merge)
         log_each_tree_time: Whether to log elapsed time for each tree (tree_first)
@@ -604,15 +679,67 @@ def predict_disk_forest(
         log(
             "  Requested eval_strategy=tree_first but full probability buffer "
             f"needs ~{full_prob_mb:.1f}MB (> tree_first_max_prob_mb={tree_first_cap_mb:.1f}MB). "
-            "Proceeding with tree_first because it was explicitly requested."
+            "Falling back to batch_first to avoid allocating the full matrix."
+        )
+        strategy = "batch_first"
+
+    eval_workers = max(1, int(tree_eval_workers))
+    if strategy == "batch_first":
+        # In batch_first mode, each parallel tree can return one dense probability
+        # buffer for the active sample batch. sklearn commonly materializes that
+        # as float64 before we accumulate into float32, so use a conservative
+        # multiplier instead of only counting the final float32 matrix.
+        estimated_parallel_prob_mb = batch_prob_mb * (
+            1 + RF_TREE_PROBA_PEAK_FACTOR * trees_per_batch
+        )
+        if tree_first_cap_mb > 0 and estimated_parallel_prob_mb > tree_first_cap_mb:
+            denominator = max(batch_prob_mb, 1e-9)
+            capped_trees_per_batch = max(
+                1,
+                int(
+                    ((tree_first_cap_mb / denominator) - 1)
+                    // RF_TREE_PROBA_PEAK_FACTOR
+                ),
+            )
+            if capped_trees_per_batch < trees_per_batch:
+                log(
+                    "  Reducing trees_per_batch for batch_first from "
+                    f"{trees_per_batch} to {capped_trees_per_batch} because estimated "
+                    f"parallel probability buffers need ~{estimated_parallel_prob_mb:.1f}MB "
+                    f"(> tree_first_max_prob_mb={tree_first_cap_mb:.1f}MB)."
+                )
+                trees_per_batch = capped_trees_per_batch
+                estimated_parallel_prob_mb = batch_prob_mb * (
+                    1 + RF_TREE_PROBA_PEAK_FACTOR * trees_per_batch
+                )
+    else:
+        tree_first_worker_peak_mb = batch_prob_mb * RF_TREE_PROBA_PEAK_FACTOR
+        if tree_first_cap_mb > 0 and tree_first_worker_peak_mb > 0:
+            worker_headroom_mb = tree_first_cap_mb - full_prob_mb
+            capped_eval_workers = max(
+                1,
+                int(worker_headroom_mb // tree_first_worker_peak_mb),
+            )
+            if capped_eval_workers < eval_workers:
+                log(
+                    "  Reducing tree_eval_workers for tree_first from "
+                    f"{eval_workers} to {capped_eval_workers} because full probability "
+                    f"buffer plus worker temporaries must stay within "
+                    f"tree_first_max_prob_mb={tree_first_cap_mb:.1f}MB."
+                )
+                eval_workers = capped_eval_workers
+        estimated_parallel_prob_mb = (
+            full_prob_mb + tree_first_worker_peak_mb * eval_workers
         )
 
     log(
         f"  Evaluating on {desc} ({n:,} samples) "
         f"[strategy={strategy}, batch_size={batch_size}, trees_per_batch={trees_per_batch}, "
-        f"tree_prefetch={max(1, int(tree_prefetch))}, tree_eval_workers={max(1, int(tree_eval_workers))}, "
+        f"tree_prefetch={max(1, int(tree_prefetch))}, tree_eval_workers={eval_workers}, "
         f"log_each_tree_time={bool(log_each_tree_time)}, soft-vote, "
-        f"batch_prob_buffer~{batch_prob_mb:.1f}MB, full_prob_buffer~{full_prob_mb:.1f}MB]"
+        f"batch_prob_buffer~{batch_prob_mb:.1f}MB, "
+        f"parallel_prob_peak~{estimated_parallel_prob_mb:.1f}MB, "
+        f"full_prob_buffer~{full_prob_mb:.1f}MB]"
     )
 
     if strategy == "tree_first":
@@ -622,7 +749,6 @@ def predict_disk_forest(
         n_batches = (n + batch_size - 1) // batch_size
         tree_batch_progress_every = max(1, n_batches // 10)
         prefetch = max(1, int(tree_prefetch))
-        eval_workers = max(1, int(tree_eval_workers))
 
         def _accumulate_single_tree(
             tree_idx: int,
@@ -634,8 +760,8 @@ def predict_disk_forest(
             def _predict_and_accumulate(start: int, end: int) -> Tuple[float, int]:
                 x_batch = X[start:end]
                 t0 = time.time()
-                tree_probs = tree.predict_proba(x_batch).astype(np.float32, copy=False)
-                all_probs[start:end, classes] += tree_probs
+                tree_probs = tree.predict_proba(x_batch)
+                _accumulate_tree_probs(all_probs[start:end], classes, tree_probs)
                 elapsed = time.time() - t0
                 del x_batch, tree_probs
                 return elapsed, end
@@ -758,7 +884,7 @@ def predict_disk_forest(
         def _predict_tree_probs(tree_path: str):
             # Load full tree object into RAM (disable mmap paging).
             tree = joblib.load(tree_path)
-            tree_probs = tree.predict_proba(x_batch).astype(np.float32, copy=False)
+            tree_probs = tree.predict_proba(x_batch)
             classes = np.asarray(tree.classes_, dtype=np.int64)
             del tree
             return classes, tree_probs
@@ -769,14 +895,14 @@ def predict_disk_forest(
 
             if len(chunk_paths) == 1:
                 classes, tree_probs = _predict_tree_probs(chunk_paths[0])
-                batch_probs[:, classes] += tree_probs
+                _accumulate_tree_probs(batch_probs, classes, tree_probs)
                 del classes, tree_probs
             else:
                 chunk_outputs = Parallel(n_jobs=len(chunk_paths), prefer="threads")(
                     delayed(_predict_tree_probs)(p) for p in chunk_paths
                 )
                 for classes, tree_probs in chunk_outputs:
-                    batch_probs[:, classes] += tree_probs
+                    _accumulate_tree_probs(batch_probs, classes, tree_probs)
                 del chunk_outputs
 
         batch_probs /= float(n_estimators)
@@ -812,6 +938,14 @@ def train_random_forest(
     compute_feature_importance: bool = True,
     eval_batch_size: Optional[int] = None,
     eval_prob_buffer_mb: int = 256,
+    train_trees_per_batch: Optional[int] = None,
+    val_trees_per_batch: Optional[int] = None,
+    test_trees_per_batch: Optional[int] = None,
+    eval_strategy: str = "auto",
+    tree_first_max_prob_mb: int = 2048,
+    tree_prefetch: int = 1,
+    tree_eval_workers: int = 1,
+    log_each_tree_time: bool = False,
 ) -> Dict[str, Any]:
     """
     Train and evaluate Random Forest classifier (original paper approach).
@@ -837,6 +971,14 @@ def train_random_forest(
         compute_feature_importance: Whether to compute averaged tree feature importances
         eval_batch_size: Fixed evaluation batch size (None = auto)
         eval_prob_buffer_mb: Probability buffer memory budget for auto batch size
+        train_trees_per_batch: Tree parallelism for train-set evaluation
+        val_trees_per_batch: Tree parallelism for validation-set evaluation
+        test_trees_per_batch: Tree parallelism for test-set evaluation
+        eval_strategy: 'auto', 'batch_first', or 'tree_first'
+        tree_first_max_prob_mb: Max in-memory full prob-buffer size allowed for tree_first
+        tree_prefetch: Tree prefetch queue size for tree_first pipeline
+        tree_eval_workers: Parallel tree workers in tree_first
+        log_each_tree_time: Whether to log elapsed time for each tree in tree_first
 
     Returns:
         Dictionary with model path and metrics
@@ -866,6 +1008,15 @@ def train_random_forest(
     log(f"  Trees: {n_estimators}, max_depth: {max_depth}")
     log(f"  Samples: {n_samples:,}, Features: {n_features}, Classes: {n_classes:,}")
     effective_n_jobs = max(1, int(n_jobs))
+    effective_train_trees_per_batch = (
+        effective_n_jobs if train_trees_per_batch is None else max(1, int(train_trees_per_batch))
+    )
+    effective_val_trees_per_batch = (
+        effective_n_jobs if val_trees_per_batch is None else max(1, int(val_trees_per_batch))
+    )
+    effective_test_trees_per_batch = (
+        effective_n_jobs if test_trees_per_batch is None else max(1, int(test_trees_per_batch))
+    )
     log(f"  Trees per batch: {effective_n_jobs}")
     log(f"  Tree directory: {tree_dir}")
 
@@ -946,13 +1097,17 @@ def train_random_forest(
             n_classes=n_classes,
             batch_size=eval_batch_size,
             prob_buffer_mb=eval_prob_buffer_mb,
-            trees_per_batch=effective_n_jobs,
+            trees_per_batch=effective_train_trees_per_batch,
+            eval_strategy=eval_strategy,
+            tree_first_max_prob_mb=tree_first_max_prob_mb,
+            tree_prefetch=tree_prefetch,
+            tree_eval_workers=tree_eval_workers,
+            log_each_tree_time=log_each_tree_time,
             desc="train set",
         )
-        train_acc = accuracy_score(y_train, train_preds)
-        train_f1 = f1_score(y_train, train_preds, average='weighted', zero_division=0)
+        train_acc, train_f1 = compute_accuracy_and_macro_f1(y_train, train_preds)
         log(f"Train Accuracy: {train_acc:.4f}")
-        log(f"Train F1 (weighted): {train_f1:.4f}")
+        log(f"Train Macro-F1: {train_f1:.4f}")
         del train_preds
         gc.collect()
     else:
@@ -969,13 +1124,17 @@ def train_random_forest(
             n_classes=n_classes,
             batch_size=eval_batch_size,
             prob_buffer_mb=eval_prob_buffer_mb,
-            trees_per_batch=effective_n_jobs,
+            trees_per_batch=effective_val_trees_per_batch,
+            eval_strategy=eval_strategy,
+            tree_first_max_prob_mb=tree_first_max_prob_mb,
+            tree_prefetch=tree_prefetch,
+            tree_eval_workers=tree_eval_workers,
+            log_each_tree_time=log_each_tree_time,
             desc="val set",
         )
-        val_acc = accuracy_score(y_val, val_preds)
-        val_f1 = f1_score(y_val, val_preds, average='weighted', zero_division=0)
+        val_acc, val_f1 = compute_accuracy_and_macro_f1(y_val, val_preds)
         log(f"Val Accuracy: {val_acc:.4f}")
-        log(f"Val F1 (weighted): {val_f1:.4f}")
+        log(f"Val Macro-F1: {val_f1:.4f}")
         del val_preds
         gc.collect()
     else:
@@ -991,11 +1150,15 @@ def train_random_forest(
             n_classes=n_classes,
             batch_size=eval_batch_size,
             prob_buffer_mb=eval_prob_buffer_mb,
-            trees_per_batch=effective_n_jobs,
+            trees_per_batch=effective_test_trees_per_batch,
+            eval_strategy=eval_strategy,
+            tree_first_max_prob_mb=tree_first_max_prob_mb,
+            tree_prefetch=tree_prefetch,
+            tree_eval_workers=tree_eval_workers,
+            log_each_tree_time=log_each_tree_time,
             desc="test set",
         )
-        test_acc = accuracy_score(y_test, test_preds)
-        test_f1 = f1_score(y_test, test_preds, average='weighted', zero_division=0)
+        test_acc, test_f1 = compute_accuracy_and_macro_f1(y_test, test_preds)
 
         confident_mask = test_confidences >= prediction_threshold
         confidence_accuracy = accuracy_score(
@@ -1004,7 +1167,7 @@ def train_random_forest(
         confidence_ratio = confident_mask.sum() / len(confident_mask)
 
         log(f"Test Accuracy: {test_acc:.4f}")
-        log(f"Test F1 (weighted): {test_f1:.4f}")
+        log(f"Test Macro-F1: {test_f1:.4f}")
         log(f"Confidence Accuracy: {confidence_accuracy:.4f} ({confidence_ratio:.1%})")
 
         # Classification report
@@ -1054,12 +1217,19 @@ def train_random_forest(
         'tree_dir': tree_dir,
         'n_estimators': n_estimators,
         'n_classes': n_classes,
+        'f1_average': RF_F1_AVERAGE,
         'train_accuracy': train_acc,
         'train_f1': train_f1,
+        'train_macro_f1': train_f1,
         'val_accuracy': val_acc,
         'val_f1': val_f1,
+        'val_macro_f1': val_f1,
         'test_accuracy': test_acc,
         'test_f1': test_f1,
+        'test_macro_f1': test_f1,
+        'accuracy': test_acc,
+        'f1': test_f1,
+        'macro_f1': test_f1,
         'confidence_accuracy': confidence_accuracy,
         'confidence_ratio': confidence_ratio,
         'feature_importance': importance,
@@ -1086,6 +1256,7 @@ def compare_approaches(
     Returns:
         Dictionary with results for each approach
     """
+    _require_torch()
     from models import AppScannerNN, AppScannerRF
 
     results = {}

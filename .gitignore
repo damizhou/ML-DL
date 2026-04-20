@@ -45,3 +45,6 @@ DeepFingerprinting/output/
 DataDealer/check_appscanner_ablation.py
 DataDealer/check_nan.py
 */output/
+*.log
+AppScanner/output_multi/summary.json
+AppScanner/output_multi/summary.txt
